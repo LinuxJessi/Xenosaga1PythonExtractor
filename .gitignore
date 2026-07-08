@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.DS_Store
+build/
+dist/
+# downloaded per-OS by the release workflow (or by hand); only TOOLS.txt is tracked
+packaging/tools/ffmpeg
+packaging/tools/ffmpeg.exe
+# PyInstaller writes stray specs next to a script; ours lives in packaging/ and
+# is committed, so ignore only root-level generated specs.
+/*.spec

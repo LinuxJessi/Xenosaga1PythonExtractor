@@ -1,0 +1,12 @@
+Portable binaries bundled with this release:
+
+  ffmpeg        macOS builds: static, from https://ffmpeg.martin-riedl.de
+                Windows builds: BtbN GPL win64 build,
+                sources at https://github.com/BtbN/FFmpeg-Builds
+                FFmpeg is licensed under the GPL; sources at
+                https://ffmpeg.org — these are unmodified upstream binaries.
+
+It is redistributed here purely so the extractor's movie conversion works
+on a fresh machine with zero additional installs. Replace the contents of
+this tools/ folder with your own preferred build at any time; the kit
+also picks up any ffmpeg on PATH or in common install locations.
