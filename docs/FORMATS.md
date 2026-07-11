@@ -136,6 +136,28 @@ NUL-terminated (console C-string convenience). ~2,200 unique classes;
 The constant pools are a goldmine of engine facts readable without a JVM
 (stream rates and ids sit next to `streamPlay` refs).
 
+Dialogue facts (established by patching the ST0210 "Virtual Tutorial"
+line to French and verifying in-game):
+
+- Rendered scene dialogue = CONSTANT_Utf8 pool entries, stored with
+  their layout verbatim: leading spaces for centering, trailing `\n`,
+  and the trailing NUL counted in the u2 length (same quirk as the name
+  strings above). Control codes are raw bytes here, unlike the `\NN`
+  escape text seen in the planner `.txt` sources.
+- A same-byte-length replacement is structurally free — nothing after
+  the pool is byte-offset-addressed — so `read_entry` →
+  `bytes.replace` → `patch_iso` is a complete dialogue edit
+  (MODDING.md §5 has the worked example). Length changes shift the pool
+  and need the not-yet-built class rewriter + FL00 rebuilder.
+- Scene `.evt` objects are uncompressed and **single-copy** in the TOC —
+  no texture-style duplicate sweep for dialogue.
+- U.M.N. event dialogue is *not* in the classes (string-swept all
+  carved classes): it renders from the `umn/event*.txt` text objects —
+  textpack territory. The scene-side `cf*.txt` planner sources, by
+  contrast, are never read for rendering.
+- Renderer encoding for non-ASCII constant-pool bytes (Shift-JIS vs
+  modified UTF-8) is still unestablished — open thread.
+
 ## Streamed audio `.vds`/`.vdm` (`browse.py: decode_voice_stream`)
 
 Headerless PS2 SPU ADPCM, **stereo, block-interleaved every 0x400 bytes**

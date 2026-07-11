@@ -168,16 +168,72 @@ Encoding safety nets, in order:
 3. Import reconstructs `.uml` objects around the fixed text region even
    for `.raw` exports, so headers/attachments can never be truncated.
 
-**Where the cutscene dialogue actually is:** NOT in these files. Event
-dialogue is compiled into the `.evt` Java classes (JDK 1.1 constant
-pools; note the kit's finding that constant-pool strings on this disc are
-NUL-terminated). A full dialogue translation needs a class-file string
-rewriter plus an FL00 container rebuilder — the formats are documented
-(FORMATS.md, JAVA.md, `evt.py` carves classes by structure), but the
-writer does not exist yet. Same-length-or-shorter in-place string edits
-inside `.evt` are possible today with a hex editor; length-changing edits
-shift the constant pool and require the rebuilder. Budget accordingly
-before promising a translation patch.
+**Where the rendered dialogue actually is** — two engines, two homes:
+
+- **U.M.N. conversations** (the Connection Gear chats, `umn/event*.txt`,
+  `<speech>/<char>/<msg>` markup with `\15\2`-style control codes) and
+  the `.uml` mails are plain text objects — the pipeline above covers
+  them. No copy of these lines exists in any Java class (verified by
+  string-sweeping all ~2,200 carved classes), so the `.txt` really is
+  what the U.M.N. viewer renders.
+- **Scene/cutscene dialogue** is compiled into the `.evt` Java classes
+  as constant-pool strings. The parallel `scene/cf*.txt` planner sources
+  (loader scripts, dev comments — some with dialogue-looking copies) are
+  **never read for rendering**: translating them changes nothing on
+  screen. Any dialogue translation that "works" in the text tree but not
+  in-game has fallen into exactly this trap.
+
+A full dialogue translation needs a class-file string rewriter plus an
+FL00 container rebuilder — the formats are documented (FORMATS.md,
+JAVA.md, `evt.py` carves classes by structure), but the writer does not
+exist yet; length-changing edits shift the constant pool. **Same-length
+edits, however, ship today**, with the kit alone:
+
+### Worked example: one dialogue line to French
+
+Target: the first line the game renders — `"Virtual Tutorial"` in the
+Encephalon-sim tutorial, `scene/ST0210.evt`, chain 0 (the same scene as
+the §4 texture story). `"Tutoriel virtuel"` happens to be the same 16
+characters, so the swap is structurally free:
+
+```python
+from repack import read_entry, patch_iso
+
+PATH = r"scene\ST0210.evt"
+data = read_entry(iso, 0, PATH)              # uncompressed FL00 container
+patched = data.replace(b'"Virtual Tutorial"', b'"Tutoriel virtuel"')
+patch_iso(iso, {(0, PATH): patched})         # run on a copy, as always
+```
+
+Verified in-game (USA disc, PCSX2). The rules that make this safe:
+
+1. **Byte length must not change.** The string lives in a length-prefixed
+   constant-pool entry; everything after the pool is index-addressed, not
+   offset-addressed, so an in-place same-length swap disturbs nothing.
+   Shorter translations: pad with spaces inside the quotes/line rather
+   than shortening the entry.
+2. **The string carries its layout verbatim.** The ST0210 entry is
+   6 leading spaces (manual centering) + the quoted title + `\n` + NUL
+   (the length prefix *includes* that trailing NUL — disc-wide quirk).
+   Keep all of it; replace only the words.
+3. **Stick to ASCII for now.** The encoding the renderer expects for
+   non-ASCII constant-pool bytes (Shift-JIS vs Java's modified UTF-8) is
+   not yet established — accents are unverified territory.
+4. **No sweep needed.** Unlike textures (§4), each scene `.evt` has
+   exactly one TOC entry disc-wide (`grep manifest.csv`) — one patch is
+   complete.
+
+Finding a line: unpack the containers (`evt_unpack.py --dump ... --out
+...`), then `grep -r` the extracted classes for the on-screen text; or
+grep the dumped `.evt` directly — scene containers are uncompressed, so
+dialogue is plain bytes.
+
+Smoke-testing the result costs nothing: with PCSX2 fast boot, the USA
+disc lands on this exact ST0210 line in about a minute with **zero
+input** — the patched line is literally the first thing the game shows
+(boot-flow files `base.evt` / `system.evt` / ELF verified bit-identical
+to retail while this happens; it is the game's own cold open). Boot the
+patched ISO, read the first dialog box, done.
 
 ## 6. Debugging against the running game (PINE)
 

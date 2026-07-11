@@ -107,9 +107,15 @@ UTF-8 tree, one file per object, each annotated with its Shift-JIS byte
 budget so a translator knows exactly how much room they have before
 `text-import` will reject a line. Re-encoding, budget validation, and the
 patched-ISO write are all handled by the same command; nothing is written
-until every file passes. (Cutscene dialogue is a separate case — it's
-compiled into the Java `.evt` scripts, not plain text objects; see
-[docs/MODDING.md](docs/MODDING.md) for that path.) Together with
+until every file passes. (Know which text is which: the
+U.M.N. Connection Gear conversations and mails render from these text
+objects, so the pipeline covers them fully — but scene/cutscene dialogue
+is compiled into the Java `.evt` scripts, and the dialogue-looking
+`scene/cf*.txt` planner sources are never read for rendering, so
+translating those changes nothing on screen. Same-length `.evt` line
+edits work today — proven in-game with a French line in the opening
+tutorial; see [docs/MODDING.md](docs/MODDING.md) §5 for the worked
+example and the rules.) Together with
 `repack.py`'s in-place patching, this is a complete loop for a fan
 translation: export text, translate, import, verify with `arx.compress`'s
 byte-identical round-trip that nothing else on the disc moved.
