@@ -22,6 +22,7 @@ Use your own legally obtained disc dump. This tool ships no game data.
 | [docs/FINDS.md](docs/FINDS.md) | easter eggs and dev leftovers — staff work folders on retail disc, debug tools inside shipped cutscenes, Gamera |
 | [docs/HISTORY.md](docs/HISTORY.md) | Monolith Soft historical context: what this disc records about the studio in 2002 |
 | [docs/FORMATS.md](docs/FORMATS.md) | byte-level format reference (ARX, XTX, LEX, FL00, SPU streams, SMD/SWD, PSS) with verification evidence |
+| [docs/MODDING.md](docs/MODDING.md) | **how the repack layer works** — in-place ISO patching, the ARX compressor clone, texture recolors (CLUT + raw-CT32), the 12-carrier sweep, the translator text pipeline, PINE debugging, and how to add a command to CLI/GUI/packaged builds |
 
 ## Quick start
 
@@ -49,11 +50,76 @@ out/
 `verify` re-checks every manifest row on disk: size, ARX magic on compressed
 entries, and content magic for `.pss` / `.jpg` / `.ipu`.
 
+## Repacking (modding)
+
+The kit writes mods back too. The disc is unusually friendly to this: plain
+ISO9660, all data inside contiguous bigfiles, one binary TOC per chain — so
+patching is in-place at computed offsets, never an image rebuild.
+
+```sh
+# replace any TOC object (content given uncompressed; ARX applied as needed)
+python cli.py patch --iso GAME.iso --out MODDED.iso \
+    --set 'chain0:char\pc\kosmos.xtx=my_kosmos.xtx'
+```
+
+* `arx.compress` (in `arx.py`) is a byte-perfect clone of Monolith's
+  original packer — 2,094 of the 2,095 compressed objects on the USA disc
+  recompress **byte-identically** (the last differs only in a frequency
+  tie and round-trips exactly).
+* `repack.py` patches objects in place, updates the TOC's csize/usize
+  fields, refuses writes past an object's sector allocation, and verifies
+  every write by read-back.
+* `pinkhair.py` is a worked example: it recolors KOS-MOS's hair — both the
+  CLUT palettes and the raw-CT32 strand sheets — and byte-sweeps the whole
+  disc for embedded texture copies (battle bundles `yamamoto\pc\*.bin`,
+  re-framed scene bundles `scene\cf*.a`).
+* `textpack.py` is the translator pipeline: `text-export` pulls all 914
+  text objects (588 `.txt`, 326 U.M.N. mail `.uml` text slots) into an
+  editable UTF-8 tree with per-file byte budgets; `text-import` re-encodes
+  to Shift-JIS, validates every file, and writes a patched ISO.
+
+How all of it works — down to the byte — is written up in
+[docs/MODDING.md](docs/MODDING.md), deliberately so the tools can be
+modified or reimplemented without archaeology.
+
+### Screenshots — the pinkhair mod, in-game
+
+Not a mockup — this is `python cli.py pinkhair` output booted for real
+(PCSX2), proving the repack layer round-trips through every carrier at
+once: model textures, the battle HUD, and field cutscenes together.
+
+| | |
+|---|---|
+| ![KOS-MOS model close-up, recolored hair](docs/images/pinkhair-model-closeup.png) | ![Battle screen, recolored KOS-MOS landing a HI-CRITICAL](docs/images/pinkhair-battle.png) |
+| Field/party model — the raw-CT32 strand sheets patched | Battle bundle (`yamamoto\pc\*.bin`) — same recolor, independent carrier |
+
+![Field scene with the recolored party](docs/images/pinkhair-field-party.png)
+*Vector Industries scene — the field model and battle model both carry the
+edit, which is the point: `pinkhair.py` sweeps and patches all 12 embedded
+copies of the character texture in one pass, not just the obvious one.*
+
+### The translator kit
+
+`textpack.py` is the piece built for full translation projects, not just
+cosmetic mods: `text-export` pulls **all 914 in-game text objects** — 588
+`.txt` scene/menu scripts plus 326 U.M.N. mail `.uml` slots — into a plain
+UTF-8 tree, one file per object, each annotated with its Shift-JIS byte
+budget so a translator knows exactly how much room they have before
+`text-import` will reject a line. Re-encoding, budget validation, and the
+patched-ISO write are all handled by the same command; nothing is written
+until every file passes. (Cutscene dialogue is a separate case — it's
+compiled into the Java `.evt` scripts, not plain text objects; see
+[docs/MODDING.md](docs/MODDING.md) for that path.) Together with
+`repack.py`'s in-place patching, this is a complete loop for a fan
+translation: export text, translate, import, verify with `arx.compress`'s
+byte-identical round-trip that nothing else on the disc moved.
+
 ## GUI
 
 Prefer clicking to typing? `python gui.py` starts a local web GUI (stdlib
 only — no Flask, no install), opens your browser, auto-detects the disc image,
-and gives you all five commands (list / extract / classes / browse / verify)
+and gives you all nine commands (list / extract / classes / browse / verify /
+recolor KOS-MOS / export & import text for translation / patch)
 as cards with a built-in file picker and a live log that streams the
 underlying `cli.py` output. It shells out to the same CLI, so the two never
 drift.
@@ -76,7 +142,11 @@ Each one `cd`s next to itself, finds your Python, and runs `gui.py`.
 
 `python build.py` (a thin wrapper over `packaging/xenosaga1-extractor.spec`)
 freezes the kit into a **self-contained bundle** — the same shape as the
-Episode III kit. Output names carry the platform, so builds coexist in `dist/`:
+Episode III kit. The bundle embeds its own **Python 3.12** runtime and (in
+release builds) a portable **ffmpeg** under `tools/`, so end users install
+nothing at all — the "Python 3.9+" note above applies only to running from
+a source checkout. Output names carry the platform, so builds coexist in
+`dist/`:
 
 ```
 dist/Xenosaga-I-Extractor-windows/    (built on Windows — zip and ship)
@@ -140,10 +210,11 @@ filler   = "MONOLITHSOFT Xenosaga Episode.1\0" repeated, phase-locked to offset 
   pre-order walk of the directory tree.
 * `cfile` entries (2,095 of them) are compressed; the stored payload begins
   with an `ARX\0` header carrying uncompressed + compressed sizes that match
-  the TOC fields. **The ARX algorithm is not yet reverse-engineered** —
-  compressed entries are extracted as stored and flagged in the manifest.
-  (The decompressor is somewhere near `HuffmanDecode` / `decode_sub` in
-  SLUS_204.69 — the binary ships with full symbols.)
+  the TOC fields. **ARX is fully reverse-engineered both ways** — `arx.py`
+  decompresses (applied transparently by `browse`) and compresses (a
+  byte-perfect clone of Monolith's own packer, used by the repack layer;
+  see [docs/FORMATS.md](docs/FORMATS.md)). `extract` still writes
+  compressed entries as stored and `verify` still checks the stored form.
 * The unused tail of each TOC is filled with a repeating, offset-phase-locked
   `MONOLITHSOFT Xenosaga Episode.1` string. Charming, and a clean
   end-of-entries sentinel.
@@ -196,9 +267,12 @@ These play directly in VLC / ffplay and convert with plain ffmpeg.
 | `chains.py` | the two bigfile chains; spanning reads across file boundaries |
 | `carve.py` | layer-1 movie scanner/carver (SCR-validated boundaries) |
 | `evt.py` | Java class-file carver for `.evt` FL00 event containers |
-| `arx.py` | ARX decompressor (word dictionary coder, ported from xenotool) |
+| `arx.py` | ARX codec (word dictionary coder; decompressor ported from xenotool, compressor is a byte-perfect clone of Monolith's packer) |
+| `repack.py` | in-place ISO patcher: TOC field updates, allocation checks, read-back verification |
+| `pinkhair.py` | worked modding example: KOS-MOS hair recolor (CLUT edits + raw-CT32 strand pixels) with disc-wide carrier sweep |
+| `textpack.py` | translator pipeline: export all 914 text objects to editable UTF-8 (+ byte budgets), re-encode/validate/import to a patched ISO |
 | `browse.py` | asset converters: `.xtx`→PNG (lex-material colours), voice→WAV, text→UTF-8, movies→MP4 |
-| `cli.py` | `list` / `extract` / `classes` / `browse` / `verify` |
+| `cli.py` | `list` / `extract` / `classes` / `browse` / `verify` / `patch` / `pinkhair` / `text-export` / `text-import` |
 | `gui.py` | local web GUI over the CLI (stdlib `http.server` + SSE) |
 | `evt_unpack.py` | standalone: FL00 → raw + normalized (JVM-loadable) class trees from an extracted `dump/` |
 | `class_map.py` | standalone: parse a class tree into a machine-readable JSON class map |

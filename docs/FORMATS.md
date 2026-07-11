@@ -26,6 +26,42 @@ Validated: every ARX blob on the disc decompresses; decompressed `.xtx`
 start `XTX\0`, `.arc` start `FL00`, sizes match `size_orig` and the TOC's
 usize field. (Nominal 8-bit codes can index past 30; retail files don't.)
 
+**Compressor** (`arx.py: compress`, 2026-07-11): LUT = the 30 most frequent
+u32 words, most frequent first (shortest codes), **ties broken by first
+occurrence in the payload** — with that tie-break the output reproduces
+retail blobs *byte-identically* for 2,094/2,095 compressed objects on the
+USA disc (`chain1/mtnpack/SCE02004D.arc` differs in a tie only; same size,
+exact round-trip). So Monolith's packer used the same greedy scheme. Full
+control-bit sequences per slot: `1 0 x` (slots 0-1), `1 10xx` (2-5),
+`1 110xxx` (6-13), `1 111xxxxx` (14-29) — 3/5/7/9 bits vs 33 for a literal.
+Header size_comp = whole blob length incl. header; unk = 0.
+
+## Repack notes (`repack.py`, `pinkhair.py`)
+
+* TOC `cfile` size fields are patched in place (u32 csize @ fields_off+3,
+  u24 usize @ +7); an object's allocation = gap to the next entry's sector.
+* Character CLUT recolors keep ARX output size identical in practice.
+* The disc embeds copies of `char/pc/kosmos*.xtx` inside
+  `yamamoto/pc/kosmos*.bin` (battle bundles: section table `u32 n, u32
+  total, u32 off[n]`; lex @ 0x20, XTX findable by magic — these embeds are
+  **byte-identical**) and inside the uncompressed per-scene bundles
+  `scene/cf0210.a`, `cf0740.a`, `cf1800.a`, `cf3140.a` — 12 hair-palette
+  carriers total (verified by disc-wide sweep; quarter-row sweep confirms
+  no others).
+* **cf*.a re-frames the texture**: XTX magic + sub-header present but the
+  entry layout differs and the canvas is stored with 4-byte inserts at a
+  ~2020-byte effective row stride, so only some 64-byte CLUT rows survive
+  contiguously (cf0210.a: 26/32 half-rows intact, 6 split). A row-level
+  sweep alone therefore *partially* patches them — caught in the act via
+  PINE RAM forensics: the running game builds the opening-sim KOS-MOS
+  from cf0210.a, and its in-RAM CLUT showed exactly the 30 row-patched
+  entries pink and 91 blue. Fix: anchored entry-level (aligned 4-byte
+  value) replacement; safe because the hair ramp shares no exact RGBA
+  word with any other tile in the canvas (verified 0 overlap).
+* The engine also bakes scene lighting into CLUTs at load time (RAM
+  copies differ from disc in RGB but not alpha), so RAM-vs-file palette
+  comparisons must expect tinted variants.
+
 ## XTX textures (`browse.py: decode_xtx`) — via xenotool, extended
 
 An `.xtx` is a raw GS memory image, not a picture.

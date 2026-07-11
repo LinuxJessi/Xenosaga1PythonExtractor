@@ -244,12 +244,77 @@ def build_verify(form):
     return [*CLI_ARGV, "verify", "--out", out]
 
 
+def build_pinkhair(form):
+    iso = _str(form, "iso")
+    if not iso:
+        raise ValueError("ISO path is required")
+    dry = _bool(form, "dry_run")
+    out = _str(form, "out")
+    if not out and not dry:
+        raise ValueError("Output ISO path is required (or tick Dry run)")
+    args = [*CLI_ARGV, "pinkhair", "--iso", iso]
+    if out:
+        args += ["--out", out]
+    hue = _str(form, "hue")
+    if hue and hue != "0.92":
+        args += ["--hue", hue]
+    if dry:
+        args.append("--dry-run")
+    return args
+
+
+def build_patch(form):
+    iso = _str(form, "iso")
+    out = _str(form, "out")
+    sets = _str(form, "sets")
+    if not iso:
+        raise ValueError("ISO path is required")
+    if not out:
+        raise ValueError("Output ISO path is required")
+    specs = [s.strip() for s in sets.split(";") if s.strip()]
+    if not specs:
+        raise ValueError(
+            "At least one replacement is required "
+            "(chainN:toc\\path=localfile, separate several with ';')")
+    args = [*CLI_ARGV, "patch", "--iso", iso, "--out", out]
+    for s in specs:
+        args += ["--set", s]
+    return args
+
+
+def build_text_export(form):
+    iso = _str(form, "iso")
+    out = _str(form, "out")
+    if not iso:
+        raise ValueError("ISO path is required")
+    if not out:
+        raise ValueError("Text directory is required")
+    return [*CLI_ARGV, "text-export", "--iso", iso, "--out", out]
+
+
+def build_text_import(form):
+    iso = _str(form, "iso")
+    text = _str(form, "text")
+    out = _str(form, "out")
+    if not iso:
+        raise ValueError("ISO path is required")
+    if not text:
+        raise ValueError("Edited text directory is required")
+    if not out:
+        raise ValueError("Output ISO path is required")
+    return [*CLI_ARGV, "text-import", "--iso", iso, "--text", text, "--out", out]
+
+
 BUILDERS = {
-    "list":    build_list,
-    "extract": build_extract,
-    "classes": build_classes,
-    "browse":  build_browse,
-    "verify":  build_verify,
+    "list":        build_list,
+    "extract":     build_extract,
+    "classes":     build_classes,
+    "browse":      build_browse,
+    "verify":      build_verify,
+    "pinkhair":    build_pinkhair,
+    "patch":       build_patch,
+    "text-export": build_text_export,
+    "text-import": build_text_import,
 }
 
 
@@ -1198,7 +1263,7 @@ async function loadStatus() {
     '(the 58 layer-1 movies carved from outside the filesystem). ' +
     'Enable <em>Extract code</em> to also pull the unstripped ELFs and IOP modules into <code>browse/code/</code>. ' +
     'ARX-compressed entries (2,095 files) are written as stored and flagged in the manifest — ' +
-    'the decompression algorithm is pending RE.',
+    '<em>Convert for browsing</em> decompresses them transparently.',
     [
       {name: 'iso',      label: 'ISO path',    value: defaultIso,
        pick: {mode: 'file', filter: 'iso'}},
@@ -1260,6 +1325,69 @@ async function loadStatus() {
     [
       {name: 'out', label: 'Output dir', value: defaultOut, pick: {mode: 'dir'}},
     ], 'Verify'));
+
+  const pinkDefault = defaultIso
+    ? defaultIso.replace(/\.iso$/i, '') + ' (PINK).iso' : '';
+
+  cards.appendChild(makeCard(6, 'pinkhair', 'Recolor KOS-MOS\'s hair',
+    'The whole mod pipeline in one click: recolors her hair in every carrier on the disc ' +
+    '(6 character textures, 2 battle bundles, 4 scene bundles — CLUT palettes <em>and</em> the ' +
+    'true-colour strand sheets), then writes a bootable patched ISO. The retail ISO is never ' +
+    'modified; the output is a full copy (~8.5 GB, a few minutes). ' +
+    'Tick <em>Dry run</em> to see what would change without writing anything.',
+    [
+      {name: 'iso',     label: 'Retail ISO',  value: defaultIso,
+       pick: {mode: 'file', filter: 'iso'}},
+      {name: 'out',     label: 'Output ISO',  value: pinkDefault,
+       placeholder: 'e.g. Xenosaga Episode I (PINK).iso'},
+      {name: 'hue',     label: 'Hair colour', type: 'select', value: '0.92',
+       options: [['0.92', 'Pink (0.92)'], ['0.85', 'Magenta (0.85)'],
+                 ['0.75', 'Purple (0.75)'], ['0.33', 'Green (0.33)'],
+                 ['0.13', 'Gold (0.13)'], ['0.0', 'Red (0.0)']]},
+      {name: 'dry_run', label: 'Dry run',     type: 'checkbox',
+       hint: 'sweep and report only — write no ISO'},
+    ], 'Recolor'));
+
+  cards.appendChild(makeCard(7, 'text-export', 'Export text for translation',
+    'Pulls all 914 text objects off the disc into an editable UTF-8 tree: 588 <code>.txt</code> ' +
+    '(scene scripts, U.M.N. event dialogue) and 326 <code>.uml</code> U.M.N. mails (their fixed-length ' +
+    'text slot; the binary header and attached image ride along untouched). ' +
+    '<code>textpack_manifest.csv</code> lists every file\'s byte budget — Shift-JIS bytes, so kana/kanji ' +
+    'count double. Edit the <code>.utf8.txt</code> files in any editor, then run <em>Import translated text</em>. ' +
+    'Note: dialogue spoken during cutscenes lives in the Java <code>.evt</code> scripts instead — ' +
+    'see docs/MODDING.md.',
+    [
+      {name: 'iso', label: 'Retail ISO', value: defaultIso,
+       pick: {mode: 'file', filter: 'iso'}},
+      {name: 'out', label: 'Text dir',   placeholder: 'directory for the editable text tree',
+       pick: {mode: 'dir'}},
+    ], 'Export text'));
+
+  cards.appendChild(makeCard(8, 'text-import', 'Import translated text',
+    'Re-encodes the edited tree back to Shift-JIS, checks every file against its byte budget ' +
+    '(clear per-file errors if anything is over or uses characters Shift-JIS can\'t encode — ' +
+    'nothing is written until all files pass), and writes a patched ISO. ' +
+    'Only files that actually changed are patched.',
+    [
+      {name: 'iso',  label: 'Retail ISO',       value: defaultIso,
+       pick: {mode: 'file', filter: 'iso'}},
+      {name: 'text', label: 'Edited text dir',  placeholder: 'the tree from Export text',
+       pick: {mode: 'dir'}},
+      {name: 'out',  label: 'Output ISO',       placeholder: 'path for the translated ISO copy'},
+    ], 'Import text'));
+
+  cards.appendChild(makeCard(9, 'patch', 'Patch disc objects (advanced)',
+    'Replace any TOC object with a local file and write a modified ISO — the generic ' +
+    'repack layer behind the recolor card. Content is given <em>uncompressed</em>; entries the ' +
+    'TOC marks compressed are ARX-recompressed with a byte-perfect clone of Monolith\'s packer. ' +
+    'Objects cannot outgrow their sector allocation; every write is verified by read-back. ' +
+    'Format: <code>chain0:char\\pc\\kosmos.xtx=C:\\mods\\my_kosmos.xtx</code> — separate several with <code>;</code>',
+    [
+      {name: 'iso',  label: 'Retail ISO',   value: defaultIso,
+       pick: {mode: 'file', filter: 'iso'}},
+      {name: 'out',  label: 'Output ISO',   placeholder: 'path for the patched ISO copy'},
+      {name: 'sets', label: 'Replacements', placeholder: 'chainN:toc\\path=localfile; ...'},
+    ], 'Patch'));
 
   // Open the extract card by default
   cards.querySelector('[data-name="extract"]').classList.add('open');

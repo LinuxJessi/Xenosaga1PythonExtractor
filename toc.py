@@ -42,6 +42,8 @@ class TocEntry:
     size: int           # stored byte length (compressed length for cfiles)
     usize: int | None   # uncompressed length for cfiles, else None
     compressed: bool
+    fields_off: int = -1  # TOC byte offset of the sector/size/usize fields
+                          # (u24 sector, u32 size[, u24 usize]) — for repack
 
     @property
     def byte_offset(self) -> int:
@@ -116,6 +118,7 @@ def parse_toc(data: bytes, source: str) -> List[TocEntry]:
                 size=size,
                 usize=usize,
                 compressed=comp,
+                fields_off=off,
             )
         )
         pos = off + (10 if comp else 7)

@@ -12,6 +12,11 @@ Usage:
     python cli.py browse  --out OUTDIR [--kinds textures,audio,banks,images,text,movies]
                           [--rate 48000]
     python cli.py verify  --out OUTDIR
+    python cli.py patch   --iso GAME.iso --out MODDED.iso
+                          --set 'chain0:char\\pc\\kosmos.xtx=my_kosmos.xtx' [...]
+    python cli.py pinkhair --iso GAME.iso --out PINK.iso [--hue 0.92] [--dry-run]
+    python cli.py text-export --iso GAME.iso --out TEXTDIR
+    python cli.py text-import --iso GAME.iso --text TEXTDIR --out MODDED.iso
 
 ``extract`` writes:
     OUTDIR/dump/chain0/<in-game path>   chain-0 files (system / field data)
@@ -254,12 +259,63 @@ def cmd_verify(args) -> int:
     return 1 if bad else 0
 
 
+def cmd_patch(args) -> int:
+    import shutil
+
+    from repack import patch_iso
+
+    replacements = {}
+    for spec in args.set:
+        try:
+            target, src = spec.split("=", 1)
+            chain_s, path = target.split(":", 1)
+            chain = int(chain_s.removeprefix("chain"))
+        except ValueError:
+            print(f"bad --set {spec!r} (want 'chain0:some\\path=file')",
+                  file=sys.stderr)
+            return 2
+        replacements[(chain, path)] = Path(src).read_bytes()
+    dst = Path(args.out)
+    if dst.resolve() != Path(args.iso).resolve():
+        print(f"copying {args.iso} -> {dst} ...", file=sys.stderr)
+        shutil.copyfile(args.iso, dst)
+    patch_iso(dst, replacements)
+    return 0
+
+
+def cmd_pinkhair(args) -> int:
+    from pinkhair import DEFAULT_HUE, run
+
+    try:
+        return run(args.iso, args.out, hue=(args.hue if args.hue is not None
+                                            else DEFAULT_HUE),
+                   preview=args.preview, dry_run=args.dry_run)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+
+def cmd_text_export(args) -> int:
+    from textpack import export_text
+
+    return export_text(args.iso, args.out)
+
+
+def cmd_text_import(args) -> int:
+    from textpack import import_text
+
+    return import_text(args.iso, args.text, args.out)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn in (("list", cmd_list), ("extract", cmd_extract),
                      ("classes", cmd_classes), ("browse", cmd_browse),
-                     ("verify", cmd_verify)):
+                     ("verify", cmd_verify), ("patch", cmd_patch),
+                     ("pinkhair", cmd_pinkhair),
+                     ("text-export", cmd_text_export),
+                     ("text-import", cmd_text_import)):
         p = sub.add_parser(name)
         if name != "browse":
             p.add_argument("--iso", required=name not in ("verify",))
@@ -276,6 +332,30 @@ def main() -> int:
         if name == "browse":
             p.add_argument("--kinds", help="comma list: textures,audio,banks,images,text,movies")
             p.add_argument("--rate", type=int, help="voice sample rate (default 48000)")
+        if name == "patch":
+            p.add_argument("--out", required=True,
+                           help="patched ISO to write (copied from --iso first)")
+            p.add_argument("--set", action="append", required=True, metavar
+                           ="chainN:toc\\path=localfile",
+                           help="replace a TOC object with a local file "
+                                "(uncompressed content; repeatable)")
+        if name == "pinkhair":
+            p.add_argument("--out",
+                           help="recolored ISO to write (required unless --dry-run)")
+            p.add_argument("--hue", type=float,
+                           help="target hue 0..1 (default 0.92 = pink)")
+            p.add_argument("--preview",
+                           help="directory for before/after PNG renders")
+            p.add_argument("--dry-run", action="store_true",
+                           help="recolor + sweep only, write no ISO")
+        if name == "text-export":
+            p.add_argument("--out", required=True,
+                           help="directory for the editable UTF-8 text tree")
+        if name == "text-import":
+            p.add_argument("--text", required=True,
+                           help="edited text tree (from text-export)")
+            p.add_argument("--out", required=True,
+                           help="patched ISO to write")
     args = ap.parse_args()
     return args.fn(args)
 

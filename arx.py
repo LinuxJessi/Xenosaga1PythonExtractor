@@ -1,4 +1,4 @@
-"""arx.py — ARX decompression (Episode I's bigfile compression).
+"""arx.py — ARX compression/decompression (Episode I's bigfile compression).
 
 Algorithm ported from Lakuwu's xenotool (``xeno_arx.c``). ARX is a
 word-oriented dictionary coder:
@@ -21,8 +21,19 @@ the 30-entry table; retail files stay within bounds (guarded here anyway).
 from __future__ import annotations
 
 import struct
+from collections import Counter
 
 MAGIC = b"ARX\x00"
+
+# Full control-bit sequence (marker 1 + prefix code) per LUT slot. Slots
+# 0-1 / 2-5 / 6-13 / 14-29 cost 3 / 5 / 7 / 9 bits; a literal costs 1
+# control bit + a 32-bit stream word, so every LUT hit is a win.
+_LUT_CODES = [[1, 0, i] for i in range(2)]
+_LUT_CODES += [[1, 1, 0, (i - 2) >> 1 & 1, (i - 2) & 1] for i in range(2, 6)]
+_LUT_CODES += [[1, 1, 1, 0] + [(i - 6) >> s & 1 for s in (2, 1, 0)]
+               for i in range(6, 14)]
+_LUT_CODES += [[1, 1, 1, 1] + [(i - 14) >> s & 1 for s in (4, 3, 2, 1, 0)]
+               for i in range(14, 30)]
 
 
 class ARXError(ValueError):
@@ -100,3 +111,57 @@ def decompress(data: bytes) -> bytes:
         raise ARXError(
             f"stream ended early: {written * 4}/{size_orig} bytes decoded")
     return bytes(out[:size_orig])
+
+
+def compress(payload: bytes) -> bytes:
+    """Compress ``payload`` into an ARX blob (exact inverse of decompress).
+
+    The LUT holds the 30 most frequent u32 words, most frequent first so
+    they get the shortest prefix codes, ties broken by first occurrence —
+    which reproduces retail blobs byte-for-byte (verified corpus-wide), so
+    Monolith's original packer evidently did the same. Header carries
+    unk == 0 and size_comp == total blob length, as retail does.
+    """
+    n_words = (len(payload) + 3) // 4
+    padded = payload + b"\x00" * (n_words * 4 - len(payload))
+    words = struct.unpack(f"<{n_words}I", padded) if n_words else ()
+
+    freq = Counter(words)
+    first: dict[int, int] = {}
+    for i, w in enumerate(words):
+        if w not in first:
+            first[w] = i
+    ranked = sorted(freq.items(), key=lambda t: (-t[1], first[t[0]]))[:30]
+    lut = [w for w, _ in ranked]
+    slot = {w: i for i, w in enumerate(lut)}
+    lut += [0] * (30 - len(lut))
+
+    out: list[int] = []          # u32 words: control words + literals mixed
+    ctrl_pos = -1                # index in ``out`` of the active control word
+    ctrl_val = 0
+    ctrl_n = 32                  # bits used in the active control word
+
+    def put_bit(b: int) -> None:
+        nonlocal ctrl_pos, ctrl_val, ctrl_n
+        if ctrl_n == 32:
+            ctrl_pos = len(out)
+            out.append(0)
+            ctrl_val = 0
+            ctrl_n = 0
+        ctrl_val = (ctrl_val << 1) | b
+        ctrl_n += 1
+        out[ctrl_pos] = ctrl_val << (32 - ctrl_n)
+
+    for w in words:
+        i = slot.get(w)
+        if i is None:
+            put_bit(0)
+            out.append(w)
+        else:
+            for b in _LUT_CODES[i]:
+                put_bit(b)
+
+    blob_len = 16 + 30 * 4 + len(out) * 4
+    return (MAGIC + struct.pack("<III", len(payload), blob_len, 0)
+            + struct.pack("<30I", *lut)
+            + struct.pack(f"<{len(out)}I", *out))

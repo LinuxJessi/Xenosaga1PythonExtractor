@@ -23,7 +23,7 @@ permissions:
   contents: write   # needed for softprops/action-gh-release on tag pushes
 
 env:
-  PYTHON_VERSION: '3.13'
+  PYTHON_VERSION: '3.12'   # match the Python the kit is developed and tested on
 
 jobs:
   build-windows:
