@@ -17,6 +17,12 @@ Usage:
     python cli.py pinkhair --iso GAME.iso --out PINK.iso [--hue 0.92] [--dry-run]
     python cli.py text-export --iso GAME.iso --out TEXTDIR
     python cli.py text-import --iso GAME.iso --text TEXTDIR --out MODDED.iso
+    python cli.py subs-template --src MOVIE.pss --out MOVIE.srt [--cue-seconds 5]
+    python cli.py subs-burn --src MOVIE.pss --srt MOVIE.srt --out MOVIE.dub.pss
+                            [--max-bytes N]
+    python cli.py layer1-list  --iso GAME.iso
+    python cli.py layer1-patch --iso GAME.iso --out MODDED.iso
+                               (--index N | --name layer1_045_lba....pss) --file NEW.pss
 
 ``extract`` writes:
     OUTDIR/dump/chain0/<in-game path>   chain-0 files (system / field data)
@@ -307,6 +313,79 @@ def cmd_text_import(args) -> int:
     return import_text(args.iso, args.text, args.out)
 
 
+def cmd_subs_template(args) -> int:
+    import subs
+    from browse import detect_ffmpeg
+
+    ffprobe = subs.detect_ffprobe(detect_ffmpeg())
+    if not ffprobe:
+        print("error: ffprobe not found (need ffmpeg installed)", file=sys.stderr)
+        return 2
+    n = subs.write_srt_template(args.src, args.out,
+                                cue_seconds=args.cue_seconds or 5.0,
+                                ffprobe=ffprobe)
+    print(f"wrote {n} blank cues to {args.out} — time and translate them in "
+          "any subtitle editor (Aegisub, Subtitle Edit) against the movie's "
+          "already-extracted MP4, then run subs-burn", file=sys.stderr)
+    return 0
+
+
+def cmd_subs_burn(args) -> int:
+    import subs
+    from browse import detect_ffmpeg
+
+    ffmpeg = detect_ffmpeg()
+    if not ffmpeg:
+        print("error: ffmpeg not found", file=sys.stderr)
+        return 2
+    ffprobe = subs.detect_ffprobe(ffmpeg)
+    try:
+        report = subs.burn(args.src, args.srt, args.out, ffmpeg=ffmpeg,
+                           ffprobe=ffprobe, max_bytes=args.max_bytes)
+    except (RuntimeError, ValueError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    print(f"wrote {args.out}: {report['new_size']} bytes "
+          f"(source was {report['orig_size']}, {report['video_packets']} "
+          f"video packets, encoded at {report['bitrate_kbps']} kbps in "
+          f"{report['attempts']} attempt(s))", file=sys.stderr)
+    print("NOT verified against the PS2 IPU decoder or a real disc — boot "
+          "in PCSX2 (via layer1-patch/patch + the movie's own chain/index) "
+          "before trusting a batch of these. See docs/SUBTITLES.md.",
+          file=sys.stderr)
+    return 0
+
+
+def cmd_layer1_list(args) -> int:
+    import subs
+
+    for s in subs.list_layer1(args.iso):
+        print(f"{s.index:>3}  {s.name}  sector={s.sector:<10} size={s.size}")
+    return 0
+
+
+def cmd_layer1_patch(args) -> int:
+    import shutil
+
+    import subs
+
+    if args.index is None and args.name is None:
+        print("error: need --index or --name", file=sys.stderr)
+        return 2
+    dst = Path(args.out)
+    if dst.resolve() != Path(args.iso).resolve():
+        print(f"copying {args.iso} -> {dst} ...", file=sys.stderr)
+        shutil.copyfile(args.iso, dst)
+    new_bytes = Path(args.file).read_bytes()
+    try:
+        subs.patch_layer1(dst, args.index if args.index is not None else args.name,
+                          new_bytes)
+    except (ValueError, RuntimeError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -315,9 +394,13 @@ def main() -> int:
                      ("verify", cmd_verify), ("patch", cmd_patch),
                      ("pinkhair", cmd_pinkhair),
                      ("text-export", cmd_text_export),
-                     ("text-import", cmd_text_import)):
+                     ("text-import", cmd_text_import),
+                     ("subs-template", cmd_subs_template),
+                     ("subs-burn", cmd_subs_burn),
+                     ("layer1-list", cmd_layer1_list),
+                     ("layer1-patch", cmd_layer1_patch)):
         p = sub.add_parser(name)
-        if name != "browse":
+        if name not in ("browse", "subs-template", "subs-burn"):
             p.add_argument("--iso", required=name not in ("verify",))
         p.set_defaults(fn=fn)
         if name in ("list", "extract"):
@@ -356,6 +439,26 @@ def main() -> int:
                            help="edited text tree (from text-export)")
             p.add_argument("--out", required=True,
                            help="patched ISO to write")
+        if name == "subs-template":
+            p.add_argument("--src", required=True, help="source .pss movie")
+            p.add_argument("--out", required=True, help="SRT skeleton to write")
+            p.add_argument("--cue-seconds", type=float,
+                           help="uniform cue length (default 5s) — a rough "
+                                "starting point, retime by hand")
+        if name == "subs-burn":
+            p.add_argument("--src", required=True, help="source .pss movie")
+            p.add_argument("--srt", required=True, help="translated, timed SRT")
+            p.add_argument("--out", required=True,
+                           help="subtitled .pss to write (original audio kept)")
+            p.add_argument("--max-bytes", type=int,
+                           help="size ceiling (default: source file's own "
+                                "size — the allocation for a TOC movie or "
+                                "layer-1 slot is never larger than that)")
+        if name == "layer1-patch":
+            p.add_argument("--out", required=True, help="patched ISO to write")
+            p.add_argument("--index", type=int, help="movie index (see layer1-list)")
+            p.add_argument("--name", help="movie filename (see layer1-list)")
+            p.add_argument("--file", required=True, help="replacement .pss")
     args = ap.parse_args()
     return args.fn(args)
 

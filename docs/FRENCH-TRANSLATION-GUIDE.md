@@ -6,6 +6,11 @@ themselves — no machine translation, no AI — using the kit's existing
 This documents what the kit genuinely supports today and where its honest
 limits are; don't oversell the second half to yourself mid-project.
 
+This guide covers translating **existing text objects** on the disc. FMV
+cutscenes are a different problem — they carry no subtitle track to
+translate at all, in any language — see
+[SUBTITLES.md](SUBTITLES.md) for authoring and burning in new ones.
+
 ## What this pipeline covers, and what it doesn't
 
 Two different systems render text in this game, and only one of them has a

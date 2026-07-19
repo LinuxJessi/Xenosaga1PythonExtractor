@@ -305,16 +305,78 @@ def build_text_import(form):
     return [*CLI_ARGV, "text-import", "--iso", iso, "--text", text, "--out", out]
 
 
+def build_subs_template(form):
+    src = _str(form, "src")
+    out = _str(form, "out")
+    if not src:
+        raise ValueError("Source movie (.pss) is required")
+    if not out:
+        raise ValueError("SRT output path is required")
+    args = [*CLI_ARGV, "subs-template", "--src", src, "--out", out]
+    cue = _str(form, "cue_seconds")
+    if cue:
+        args += ["--cue-seconds", cue]
+    return args
+
+
+def build_subs_burn(form):
+    src = _str(form, "src")
+    srt = _str(form, "srt")
+    out = _str(form, "out")
+    if not src:
+        raise ValueError("Source movie (.pss) is required")
+    if not srt:
+        raise ValueError("Translated SRT is required")
+    if not out:
+        raise ValueError("Output movie path is required")
+    args = [*CLI_ARGV, "subs-burn", "--src", src, "--srt", srt, "--out", out]
+    max_bytes = _str(form, "max_bytes")
+    if max_bytes:
+        args += ["--max-bytes", max_bytes]
+    return args
+
+
+def build_layer1_list(form):
+    iso = _str(form, "iso")
+    if not iso:
+        raise ValueError("ISO path is required")
+    return [*CLI_ARGV, "layer1-list", "--iso", iso]
+
+
+def build_layer1_patch(form):
+    iso = _str(form, "iso")
+    out = _str(form, "out")
+    index = _str(form, "index")
+    name = _str(form, "name")
+    file_ = _str(form, "file")
+    if not iso:
+        raise ValueError("ISO path is required")
+    if not out:
+        raise ValueError("Output ISO path is required")
+    if not index and not name:
+        raise ValueError("Movie index or name is required (see Layer-1 list)")
+    if not file_:
+        raise ValueError("Replacement .pss file is required")
+    args = [*CLI_ARGV, "layer1-patch", "--iso", iso, "--out", out]
+    args += ["--index", index] if index else ["--name", name]
+    args += ["--file", file_]
+    return args
+
+
 BUILDERS = {
-    "list":        build_list,
-    "extract":     build_extract,
-    "classes":     build_classes,
-    "browse":      build_browse,
-    "verify":      build_verify,
-    "pinkhair":    build_pinkhair,
-    "patch":       build_patch,
-    "text-export": build_text_export,
-    "text-import": build_text_import,
+    "list":          build_list,
+    "extract":       build_extract,
+    "classes":       build_classes,
+    "browse":        build_browse,
+    "verify":        build_verify,
+    "pinkhair":      build_pinkhair,
+    "patch":         build_patch,
+    "text-export":   build_text_export,
+    "text-import":   build_text_import,
+    "subs-template": build_subs_template,
+    "subs-burn":     build_subs_burn,
+    "layer1-list":   build_layer1_list,
+    "layer1-patch":  build_layer1_patch,
 }
 
 
@@ -1388,6 +1450,54 @@ async function loadStatus() {
       {name: 'out',  label: 'Output ISO',   placeholder: 'path for the patched ISO copy'},
       {name: 'sets', label: 'Replacements', placeholder: 'chainN:toc\\path=localfile; ...'},
     ], 'Patch'));
+
+  cards.appendChild(makeCard(10, 'subs-template', 'Cutscene subtitles: 1. make a timing skeleton',
+    'FMV cutscenes (the <code>.pss</code> movies) ship with no subtitle track at all — not even in ' +
+    'Japanese, so there is nothing to translate, only to author from scratch. This writes a blank, ' +
+    'uniformly-timed <code>.srt</code> skeleton as a starting point. Real cue timing needs a human: ' +
+    'open the movie\'s already-extracted MP4 (from the <em>Convert for browsing</em> card) in any ' +
+    'SRT-capable editor (Aegisub, Subtitle Edit) and retime/translate every cue by ear before burning it in.',
+    [
+      {name: 'src', label: 'Source movie (.pss)', pick: {mode: 'file', filter: 'pss'}},
+      {name: 'out', label: 'SRT to write', placeholder: 'e.g. movie.fr.srt'},
+      {name: 'cue_seconds', label: 'Cue length (s)', placeholder: '5'},
+    ], 'Write template'));
+
+  cards.appendChild(makeCard(11, 'subs-burn', 'Cutscene subtitles: 2. burn into the movie',
+    'Re-encodes the movie with your subtitles hardcoded onto the picture — original English/Japanese ' +
+    'audio is kept untouched throughout; only the video is replaced. Requires an ffmpeg build with the ' +
+    '<code>subtitles</code> filter (needs libass compiled in — check with ' +
+    '<code>ffmpeg -filters | grep subtitle</code>; not every build has it). Output is sized to fit the ' +
+    'source object\'s allocation, since nothing on this disc can grow in place — feed the result into ' +
+    '<em>Patch disc objects</em> (for the 45 TOC movies) or <em>Layer-1: write back</em> below (for the 58 ' +
+    'raw-sector ones). <strong>Not verified against the PS2\'s IPU hardware decoder</strong> — boot the ' +
+    'patched ISO in PCSX2 and watch the actual scene before trusting a batch of these.',
+    [
+      {name: 'src', label: 'Source movie (.pss)', pick: {mode: 'file', filter: 'pss'}},
+      {name: 'srt', label: 'Translated SRT', pick: {mode: 'file', filter: 'srt'}},
+      {name: 'out', label: 'Subtitled movie to write', placeholder: 'e.g. movie.fr.pss'},
+      {name: 'max_bytes', label: 'Max size (bytes)', placeholder: 'default: source file\'s own size'},
+    ], 'Burn subtitles'));
+
+  cards.appendChild(makeCard(12, 'layer1-list', 'Layer-1 movies: list',
+    'The 58 full cutscenes live outside the ISO9660 filesystem entirely, addressed by raw sector — ' +
+    'this lists them (index, name, sector, byte allocation) so you know what to pass to <em>Layer-1: ' +
+    'write back</em>.',
+    [
+      {name: 'iso', label: 'Retail ISO', value: defaultIso, pick: {mode: 'file', filter: 'iso'}},
+    ], 'List'));
+
+  cards.appendChild(makeCard(13, 'layer1-patch', 'Layer-1 movies: write back (advanced)',
+    'Overwrites one carved layer-1 movie in place, the raw-sector counterpart to <em>Patch disc ' +
+    'objects</em> — same in-place-only rule: the replacement cannot exceed the movie\'s recovered ' +
+    'allocation (see <em>Layer-1: list</em>), and every write is verified by read-back.',
+    [
+      {name: 'iso',   label: 'Retail ISO',  value: defaultIso, pick: {mode: 'file', filter: 'iso'}},
+      {name: 'out',   label: 'Output ISO',  placeholder: 'path for the patched ISO copy'},
+      {name: 'index', label: 'Movie index', placeholder: 'e.g. 45 (see Layer-1: list)'},
+      {name: 'name',  label: 'Movie name',  placeholder: 'or e.g. layer1_045_lba3526855.pss'},
+      {name: 'file',  label: 'Replacement .pss', pick: {mode: 'file', filter: 'pss'}},
+    ], 'Write back'));
 
   // Open the extract card by default
   cards.querySelector('[data-name="extract"]').classList.add('open');

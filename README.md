@@ -61,9 +61,10 @@ No build step, no `pip install` — the kit is stdlib-only.
 python gui.py
 ```
 
-All three routes run the same thing: a local web page with all nine
+All three routes run the same thing: a local web page with all thirteen
 commands — **list / extract / classes / browse / verify / recolor KOS-MOS /
-export text / import text / patch** — that shells out to `cli.py`
+export text / import text / patch / subtitle template / subtitle burn /
+layer-1 list / layer-1 patch** — that shells out to `cli.py`
 underneath, so the GUI and the command line can never disagree.
 
 ---
@@ -220,6 +221,16 @@ python cli.py patch --iso GAME.iso --out MODDED.iso \
   today (proven in-game with a French line in the opening tutorial);
   length-changing edits await a class-file rewriter. Details and the
   worked example: [docs/MODDING.md](docs/MODDING.md) §5.
+* `subs.py` burns translated subtitles onto FMV cutscenes — these ship
+  with **no subtitle track at all**, so there's nothing to translate, only
+  to author (`subs-template` writes a timing skeleton; time and translate
+  it in any SRT editor against the movie's extracted MP4, then
+  `subs-burn` re-encodes with your subtitles hardcoded in, original
+  English/Japanese audio untouched). `layer1-list`/`layer1-patch` write
+  the result back for the 58 raw-sector movies the TOC doesn't index.
+  Mechanically verified (packet framing, size budget, clean decode against
+  a real disc's movie); **not** verified against the PS2's own IPU
+  hardware decoder — see [docs/SUBTITLES.md](docs/SUBTITLES.md).
 
 Every mechanism — the in-place patcher, the ARX clone, the two kinds of
 texture color, the 12-carrier sweep, debugging against the live game over
@@ -234,6 +245,7 @@ reimplemented from the docs alone.
 | [docs/CODEBASE.md](docs/CODEBASE.md) | **how the code is organized** — the reading stack, data flow of each command, where to start if you want to change something |
 | [docs/BROWSING.md](docs/BROWSING.md) | guided tour of the extraction output — what to open first, grep recipes |
 | [docs/MODDING.md](docs/MODDING.md) | how the repack layer works, byte by byte — patching, recoloring, translating, verifying |
+| [docs/SUBTITLES.md](docs/SUBTITLES.md) | authoring and burning FMV cutscene subtitles — what's verified vs. what still needs a PCSX2/hardware check |
 | [docs/FORMATS.md](docs/FORMATS.md) | byte-level format reference (TOC, ARX, XTX, LEX, FL00, audio, movies) with verification evidence |
 | [docs/JAVA.md](docs/JAVA.md) | the headline find: cutscenes as JDK 1.1 Java, and how to decompile them |
 | [docs/FINDS.md](docs/FINDS.md) | easter eggs and dev leftovers — staff folders on the retail disc, debug tools in shipped cutscenes, Gamera |

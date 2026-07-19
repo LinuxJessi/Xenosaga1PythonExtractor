@@ -60,10 +60,10 @@ BINARIES = [(str(FFMPEG), "tools")] if FFMPEG.exists() else []
 
 # cli.py imports these at module top, so Analysis finds them anyway; listing
 # them keeps the bundle correct even if a future refactor imports them lazily.
-# repack/pinkhair ARE imported lazily (inside cmd_patch/cmd_pinkhair), so
-# their entries here are load-bearing.
+# repack/pinkhair/subs ARE imported lazily (inside cmd_patch/cmd_pinkhair/
+# cmd_subs_*/cmd_layer1_*), so their entries here are load-bearing.
 HIDDEN = ["arx", "browse", "carve", "chains", "evt", "iso9660", "toc",
-          "repack", "pinkhair", "textpack"]
+          "repack", "pinkhair", "textpack", "subs"]
 
 
 def _ver(name):
