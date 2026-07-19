@@ -5,6 +5,36 @@ and the verification evidence, so none of it has to be re-derived. All
 byte orders little-endian unless stated. Credit where formats were learned
 from [Lakuwu's xenotool](https://github.com/Lakuwu/xenotool) is marked.
 
+## Bigfile TOC (`toc.py`) — reverse-engineered from scratch
+
+Each chain's first bigfile (`XENOSAGA.00` / `XENOSAGA.10`) begins with a
+binary table of contents mapping game paths to sector offsets **relative
+to the start of the TOC file**; the data region runs seamlessly through
+the sibling bigfiles in order. Validated by parsing both TOCs to the byte
+(zero desyncs across 8,922 entries) and by matching every recovered path
+against the engine's own `data\...` string literals in the unstripped ELF.
+
+```
+toc      = [u8 data_base_sector] entry* [0x00] filler
+file     = [b]        [name: b-1 bytes]        [u24le sector] [u32le size]
+cfile    = [b | 0x40] [name: (b&0x3f)-1 bytes] [u24le sector] [u32le csize] [u24le usize]
+dir      = [b | 0x80] [u8 pop_count]           [name: (b&0x7f)-2 bytes]
+filler   = "MONOLITHSOFT Xenosaga Episode.1\0" repeated, phase-locked to offset % 32
+```
+
+* `dir` pops `pop_count` path levels then pushes its name — the entry
+  list is a serialized pre-order walk of the directory tree.
+* `cfile` entries (2,095) are ARX-compressed; the stored payload's
+  `ARX\0` header sizes match the TOC's csize/usize fields.
+* The unused TOC tail is the repeating, offset-phase-locked
+  `MONOLITHSOFT` string — a clean end-of-entries sentinel.
+* An entry's *allocation* = gap from its start sector to the next
+  entry's start sector; `TocEntry.fields_off` (byte offset of the
+  sector/size fields within the TOC file) is the repack layer's patch
+  hook. Same "region chain" model Episode III later used with its
+  `X3.*` files and text `Lba*.txt` tables, just binary and without a
+  per-disc split.
+
 ## ARX compression (`arx.py`) — via xenotool
 
 Word-oriented dictionary coder over u32s.
