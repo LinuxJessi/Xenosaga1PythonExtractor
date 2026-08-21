@@ -85,12 +85,13 @@ Each `browse` kind writes one subtree, preserving `dump/` paths:
 
 | Directory | Count | From | Open with |
 |---|---|---|---|
-| `textures_png/` | 1,273 PNGs | `.xtx` (+ sibling `.lex` palettes) | anything |
+| `textures_png/` | 1,269 PNGs | `.xtx` (+ sibling `.lex` palettes) | anything |
+| `textures_png/_embedded/` | 1,365 PNGs (+ CSV manifest) | XTX blobs inside `.esd`/`.esp`/`.a`/`.bin`/`.npr`/`.rbg`/`.bxx` | anything |
 | `audio/` | 104 WAVs | `.vds`/`.vdm`/`.vda` streams | anything |
 | `soundbanks/` | per-bank WAVs + `smd_catalog.csv` | `.swd`/`.smd` | anything |
-| `text/` | 588 UTF-8 files | Shift-JIS `.txt` | your editor |
+| `text/` | 588 UTF-8 files + 6 sniffed string tables | Shift-JIS `.txt`, text-bearing `.dat`/`.info`/`.res`/… | your editor |
 | `movies/` | 247 MP4s | `.pss`/`.ipu` (needs ffmpeg) | anything |
-| `images/` | 13 JPEGs | `.jpg` on disc | anything |
+| `images/` | 13 JPEGs + PS2ICON3D sections | `.jpg`, `hdd.res` | anything |
 | `classes/` | ~2,200 `.class` | `.evt` FL00 containers | `javap -c -p`, CFR, Krakatau |
 | `code/` | 19 binaries | ISO filesystem (`--code`) | Ghidra / readelf |
 
@@ -100,6 +101,19 @@ Highlights per subtree:
   tables, card faces. The single best "wait, this shipped in a folder named
   after a guy?" browse.
 * **`textures_png/chain0/carddata/`** — all 117 card-game faces.
+* **`textures_png/_embedded/`** — the second texture trove: battle-effect
+  sheets from the `.esd`/`.esp` effect libraries, scene-archive art from
+  `.a` files, and the title/menu/help UI from the NLNK/NBGL/NBXX containers
+  (`title.npr`, `help.npr`, the `.rbg` room backdrops). Each PNG is named
+  `<carrier>_<hex offset>.png`; `browse/embedded_textures.csv` maps every
+  find (including blobs skipped as byte-identical duplicates of an
+  already-decoded texture). The ~500 "undecodable" rows are all in `.a`
+  archives — an in-engine XTX variant whose sub-image pointers are GS
+  addresses, with pixel data streamed separately.
+* **`text/chain0/karakama/evtitem.dat.strings.txt`** — every event-item
+  description; **`text/chain0/tanaka/CASINO.res.strings.txt`** — the casino
+  dialogue; the `nisimori/*.info.strings.txt` dev configs keep their
+  original Japanese comments (EUC-JP, auto-detected).
 * **`audio/chain1/sound/vda/`** — every streamed voice line/cutscene mix as
   48 kHz stereo WAV.
 * **`soundbanks/smd_catalog.csv`** — every music sequence with its embedded

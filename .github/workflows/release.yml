@@ -36,7 +36,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install PyInstaller
-        run: python -m pip install --upgrade pip pyinstaller
+        run: python -m pip install --upgrade pip pyinstaller numpy
 
       # Latest BtbN GPL win64 ffmpeg -> packaging/tools/, picked up by the
       # spec and bundled under tools/ (same approach as the Episode III kit).
@@ -87,7 +87,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install PyInstaller
-        run: python -m pip install --upgrade pip pyinstaller
+        run: python -m pip install --upgrade pip pyinstaller numpy
 
       # Static arm64 ffmpeg -> packaging/tools/, bundled under tools/ in
       # the .app. martin-riedl.de publishes static macOS builds with a

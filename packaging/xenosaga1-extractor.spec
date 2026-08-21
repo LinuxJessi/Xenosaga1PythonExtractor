@@ -60,10 +60,12 @@ BINARIES = [(str(FFMPEG), "tools")] if FFMPEG.exists() else []
 
 # cli.py imports these at module top, so Analysis finds them anyway; listing
 # them keeps the bundle correct even if a future refactor imports them lazily.
-# repack/pinkhair/subs ARE imported lazily (inside cmd_patch/cmd_pinkhair/
-# cmd_subs_*/cmd_layer1_*), so their entries here are load-bearing.
+# repack/pinkhair/subs/ssd/ssd_render ARE imported lazily (inside cmd_patch/
+# cmd_pinkhair/cmd_subs_*/cmd_layer1_*/cmd_music_export), so their entries here
+# are load-bearing. ssd_render pulls numpy transitively (WAV/FLAC rendering);
+# without numpy in the build env music-export still emits MIDI + SoundFont.
 HIDDEN = ["arx", "browse", "carve", "chains", "evt", "iso9660", "toc",
-          "repack", "pinkhair", "textpack", "subs"]
+          "repack", "pinkhair", "textpack", "subs", "ssd", "ssd_render"]
 
 
 def _ver(name):

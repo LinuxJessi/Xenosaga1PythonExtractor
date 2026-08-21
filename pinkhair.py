@@ -331,7 +331,8 @@ def run(iso: str, out: str | None, hue: float = DEFAULT_HUE,
                               ("after", replacements[(0, xtx_path)])):
                 res = decode_xtx(bytes(blob), lex)
                 if res:
-                    write_png(pdir / f"{stem}.{tag}.png", *res)
+                    w, h, rgba, _src = res
+                    write_png(pdir / f"{stem}.{tag}.png", w, h, rgba)
         print(f"previews under {pdir}", flush=True)
 
     if dry_run:

@@ -118,15 +118,69 @@ two middle 8-entry runs of each 32). PS2 alpha is 7-bit: scale
 
 1. Dedicated 16x16 sub-image in the same file.
 2. Paired `.lex` model materials (below).
-3. Corner-scan: menu/backdrop textures (casino `tanaka/`, dev folders) park
-   CLUT tiles in unused canvas corners, addressed by GS block pointer (CBP)
-   in the consuming overlay's texture descriptors. OV11.OVL (casino) holds
-   28-byte descriptors `{u16 u, v, w-1, h-1, 0, CBP, texslot}`; mapping:
-   `page = cbp/32`, pages laid canvas_width/64 per row (64x32 px), block
-   within page via the PSMCT32 block table (8x8 px blocks). Standalone we
-   scan block-aligned 16x16 tiles (all raw alpha <= 0x80, >= 64 distinct
+3. Overlay descriptors (`scan_ovl_cluts`): the consuming overlay addresses
+   the CLUT by GS block pointer (CBP) in 28-byte texture descriptors
+   `{u32 u, v, w-1, h-1, 0, CBP, texslot}` — OV11.OVL (casino) references
+   `data\tanaka\*.xtx` by path string. Mapping: `page = cbp/32`, pages laid
+   canvas_width/64 per row (64x32 px), block within page via the PSMCT32
+   block table (8x8 px blocks). Descriptor->texture binding would need
+   runtime tracing, so each referenced texture gets the overlay's whole CBP
+   set as candidates and the least-noisy render wins (below).
+4. Corner-scan: menu/backdrop textures park CLUT tiles in unused canvas
+   corners. Scan 16x16 tiles (all raw alpha <= 0x80, >= 64 distinct
    colours), conventional spots first: (0,224), (240,240), (224,240),
-   (176,240), (112,64), (128,0). 105/109 tanaka files verified correct.
+   (176,240), (112,64), (128,0); then the 16px grid bottom-right first;
+   then the 8px grid (CBPs can address half-block-aligned tiles).
+
+Choosing between palette candidates uses a noise metric
+(`_region_noise`): mean L1 RGB distance between horizontally adjacent
+opaque pixels — the correct palette renders coherent art (low), a wrong
+one renders dither noise (high). The chosen CLUT tile — plus the
+connected cluster of palette-looking tiles around it (card sheets park
+a strip of colour-variant CLUTs together) — is blanked (transparent)
+in the output when it falls inside the visible extent: it is palette
+data, not art (the "square of noise in the corner", GitHub issue #1). Per-material repaints are skipped when they render
+their UV rect clearly noisier than the base palette (>1.3x), and 64px
+blocks no parsed material covers get rescued by the least-noisy known
+palette when the base render is clearly garbage (>= 35 noise, winner
+< 0.5x). The rescue pool is the parsed material palettes PLUS every
+CLUT-looking tile parked in the canvas (map atlases bind their parked
+CLUTs through VIF-stream materials the static parser never sees — the
+right palette is in the file, just unreferenced; this recovered e.g. the
+second DURANDAL sign and starfield blocks of MC_DYU01).
+
+Companion models: a `.lex` with no `.xtx` of its own (kosmos_face.lex,
+kosmos_h_face.lex — 105 textures have such companions) binds its
+materials onto the sibling atlas whose stem is the longest prefix of the
+lex stem (kosmos_h_face -> kosmos_h.xtx). Merging those materials is
+ground truth the heuristics can't reach: kosmos_face.lex binds palette
+tile (448,112) to rect (896,960,128,192) — KOS-MOS's red eye, which the
+coherence ranking misjudged (radial iris art scores high on the
+adjacent/far ratio even under the correct palette).
+
+32px trusted-material rescue: blocks outside every painted rect that are
+visibly imperfect under the base palette (bn > 0.25) repaint when one of
+the PARSED MATERIAL palettes renders them near-perfectly (n < 0.25 and
+< 0.6*bn; thresholds fitted on the KOS-MOS atlas — true fixes measured
+<= 0.16, false repaints >= 0.51). Outfit art usually continues past a
+parsed rect under the same palette. Lex note: materials with pal = 0xFF
+(+0x126 = 0x07) are TRUE-COLOUR — their rect is in canvas coords and
+marks a raw CT32 region (KOS-MOS meshes 31-36 = the hair sheets).
+
+Known residual: kosmos x384-512 y128-256 is plane-packed 4bpp (each
+index byte's two nibbles are two SEPARATE 4bpp images — visor-HUD
+symbol sheet + keypad panel, clean in grayscale) whose 16-colour CLUTs
+are not in the file; needs live-RAM palette capture. Left garbled.
+
+Final pass — raw CT32 regions: a canvas can mix 8bpp paletted art with
+TRUE-COLOUR CT32 pixel regions (KOS-MOS/NPC hair-strand sheets). No
+palette can render those. Per 64px output block, if the finished render
+still measures as dither noise (`_rgba_noise` ratio >= 0.9; correctly
+paletted blocks measure below that) and the canvas region read directly
+as CT32 is more coherent, the block is drawn straight from the canvas
+(each canvas pixel = 2x2 output pixels, alpha scaled 7->8 bit). This
+finally renders the KOS-MOS hair band as hair instead of noise.
+Regions failing both readings stay garbled — the remaining static limit.
 
 ## LEX models — materials only (`browse.py: lex_materials`) — via xenotool
 
@@ -207,23 +261,99 @@ Detection: deinterleave at candidate block sizes, decode halves, correlate
 call `xeno.Sound.streamPlay(_, _, id, 48000)`. Big `.vds` (s29xxxx, up to
 20 MB) are cutscene music+voice mixes.
 
-## Sequenced BGM: SMD/SWD (`browse.py: parse_swd, smd_info`)
+## Sequenced BGM: SMD/SWD — solved (`ssd.py`, renderer in `ssd_render.py`)
 
 Procyon Studio format; music is sequenced, not streamed. Composer credit
 is embedded in retail files ("Yasunori Mitsuda / PROCYON STUDIO").
+Fully decoded 2026-07-19 from the game's own IOP driver: **SSD.IRX ships
+unstripped** — every opcode handler is symbol-named, and the dispatch
+table (`SsdSeqFuncTrap` @ .data 0xE740) + operand-length table
+(`SsdSeqFuncLength` @ 0xEFC0) give the complete opcode map without
+guessing. `ssd.py` converts SMD->MIDI and SWD->SoundFont 2;
+`ssd_render.py` (numpy) renders WAV with SPU ADSR emulation;
+`cli.py music-export` drives it all.
 
 ```
-SWD ("swdm"): u32 body_size @ 0x24, u32 body_offset @ 0x28
-  (body_offset + body_size == file size). Sample table @ 0x50, 32-byte
-  entries: u32 body-relative offset, 12 param bytes (pitch/ADSR — not
-  decoded), 16-byte ASCII name. Table ends at first invalid entry.
-  Bodies are 100% valid SPU frames; samples end at frames with flags bit0
-  set. Instrument names are real ("Timpani", "F.Horn", "CelloBassSTCC#3").
-SMD ("smdm"): NUL-terminated ASCII metadata from 0x2C: title, game,
-  composer, studio, note. Size >= ~5 KB separates real music from ambience
-  stubs. Sequence body (note events) not yet decoded — an SMD synth is the
-  open project for faithful rendering.
-SED ("seds" + embedded swdm): SFX banks.
+SMD ("smdm"): u32 size @ 8, metadata strings @ 0x2C. The u8 @ 0x20
+  (retail: 100/120/123/127) is NOT a timebase. Timing is fixed in the
+  driver: SsdInitTimer arms a 2 ms tick (USec2SysClock(2_000_000)/1000,
+  handler SsdMainInterruptProcess); each tick subtracts rate@+0x44 from a
+  16.16 accumulator @+0x40, one sequence tick per underflow.
+  SsdSeqTempoAbsolute: rate = ((tempo*53687)>>8 * master)>>8, master =
+  s16 upper half of the 16.16 word SsdSetSeqMasterTempo stores @+0x7c
+  (0x100 = neutral). Net: ticks/sec = 500*rate/65536 = 1.6*tempo =
+  tempo * 96/60 -> the timebase is 96 PPQN, and the 0x9C tempo byte is
+  literal BPM. (First-pass tooling read 0x20 as PPQN and played battle
+  themes 25% fast; U.M.N. Mode's 100 was only 4% off, masking the bug.)
+  Chunks from 0x28: [u16 type, u16 size]:
+  type 2 = metadata, type 3 = track (u8 midi_ch @ +6, events from +8),
+  type 0 = end.
+  Events < 0x80: note-on; event byte IS the velocity. Next byte:
+  [7:6] gate-byte count (0 = reuse last), [5:4] octave step -1..+2,
+  [3:0] semitone; key = running_octave + semitone; gate bytes big-endian
+  = duration in ticks. Selected opcodes (operands little-endian; the
+  full 0x80-0xFF map is the SsdSeqFuncTrap dump in ssd.py):
+    0x80 wait=gate     0x81 wait=last-delta   0x82 wait=last-delta+s8
+    0x83 wait=gate+s8  0x84/85/86 wait u8/u16/u24 (LE!)
+    0x88 rest u16 (keyoff)   0x89 tie u16 (extends note)
+    0x90 Stop / 0x91 Repeat = the MASTER LOOP: SsdSeqRepeat@0x6b64 stores the
+      current stream ptr as the loop-return point; SsdSeqStop@0x6af8 jumps back
+      to it forever (all 115 retail music tracks loop this way; loop period =
+      Stop_tick - Repeat_tick). 0x92 jump s16-rel is a forward skip, NOT the
+      loop. 0x93 if-signal (offline: never taken).
+    0x94 octave=n*12   0x95..97 octave rel/up/down
+    0x98 looptop u8-count (0=infinite)  0x99 loopend (12-byte stack
+    frames at track+0x80, saves stream pos + octave)
+    0x9C tempo=BPM     0x9D tempo rel    0xAC program change
+    0xD0/D1 key transpose abs/rel   0xD2 tune (SsdSeqTune = operand*8 note16)
+    0xD4 bender s16 note16   0xDF expression   0xE0/E1 volume abs/rel
+    0xE8/E9 pan abs/rel
+  Gotchas: (1) driver symbol names for 0x82/0x83 (AddGate/AddAfterDelta) are
+  swapped relative to the fields they actually read. (2) The dispatcher
+  advances by each handler's RETURN value, not the SsdSeqFuncLength table, so
+  a few operand lengths differ from that table -- notably 0xFD SMPTEOffset is
+  5 bytes (every SMD opens track0 with `fd 00*5`; a 1-byte misparse injects
+  two phantom tick-0 note-ons). 0xF9/0xFA/0xFB Label/SMPTE = 1/3/2 bytes.
+SWD ("swdm"): u16 bank_id @ 0x12, u8 program_count @ 0x15,
+  u32 body_size @ 0x24, u32 body_offset @ 0x28. Chunks from 0x40 (same
+  [type,size] scheme): type 3 = sample table, 32-byte entries:
+    u32 body-rel offset, u32 loop-start, u8 volume, u8 pan,
+    s16 base_pitch, u16 ADSR1, u16 ADSR2, char name[16]
+  type 4 = program chunk: u16 offset table (0 = absent) -> program:
+    u8 split_count @ +3, LFO params @ +0x10, 16-byte splits @ +0x60:
+    u8 sample, u8 root_key, u8 key_lo, u8 key_hi, u8 volume, u8 pan,
+    u8 flags, u8 pad, u16 ADSR1, u16 ADSR2 (raw SPU2 registers).
+  Pitch is exact equal temperament (table-verified against
+  SsdAllPitchTable): SPU pitch = 0x1000 * 2^((note16/256 - 60)/12),
+  note16 = base_pitch + (note + 60 - root_key) << 8. So a sample's
+  native rate = 48000 * 2^(base_pitch/256/12) (retail banks decode to
+  22.05/32/44.1/48 kHz +- per-sample tuning cents). Carve each sample from
+  its offset to the SPU end-frame flag (byte[base+1] bit0 set); the body is
+  one DMA blob and there is NO next-offset concept -- two entries at the same
+  offset (common: sample 0 + a trailing placeholder) both decode fully.
+  Loop points come from the ADPCM stream flags (bit2 = loop start frame, end
+  frame bit1 = repeat); the sample-entry loop field is unused (0x20000).
+  Instrument names are real ("Timpani", "F.Horn", "CelloBassSTCC#3").
+  Levels: the driver SQUARES the combined voice volume before the SPU VOLL/R
+  register (SsdDeviceVoiceEvent@0x65fc), so a faithful render squares
+  vel*chanvol*expr*splitvol*samplevol (ADSR is applied linearly upstream).
+SED ("seds" + embedded swdm): SFX banks; ENV_* music banks live in
+  sound/sed/ as name-matched SWDs next to their sound/smd/ sequences.
+Battle sed wrapper (yamamoto/snd/sed/*.bin, 535 files): the battle
+  voice/SE banks — per-character attack banks (km_/so_/jr_/mo_/cs_/z8_
+  x _at/_bst/_sp/_bed/_wp), 125 boss* banks, et* enemy-tech banks.
+    u32 chunk_count (even, 2..10), u32 total_size (== file size),
+    chunk_count x u32 ascending chunk offsets; chunks alternate "seds"
+    (SFX program metadata) and "swdm" (a standard wave bank, parsed by
+    parse_swd like any .SWD). Per-sample native rate comes from
+    base_pitch as above — 32007/30007/22053 Hz-style values are
+    intentional cents detune, keep them. Quirk: a few banks (boss033,
+    fere001, guno002, guno102, jr, utma003) lead their sample table
+    with zero-named placeholder entries; skip those slots, don't stop.
+    Samples named X.aif.L/X.aif.R, X_L/X_R or X.L/X.R are stereo
+    halves of one recording (238 pairs on the disc).
+  chain0/sound/sed/*.SED are the same seds payload without the outer
+  .bin wrapper; their samples ship in the sibling name-matched .SWD.
 ```
 
 Locations: `chain0/sound/smd/` (field/menu + ambience), `chain0/yamamoto/

@@ -12,12 +12,17 @@ data outside the filesystem; see ``carve.py``.
 from __future__ import annotations
 
 import mmap
+import re
 import struct
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterator
+from typing import Dict, Iterator, Optional
 
 SECTOR = 2048
+
+# PS2 boot executables are named <region>_<num>.<num>: SLUS_204.69 (USA),
+# SLPS_251.60 (JP), SLES_*, SCPS_*, etc.
+BOOT_RE = re.compile(r"^S[A-Z]{3}_\d{3}\.\d{2}$")
 
 
 @dataclass(frozen=True)
@@ -74,6 +79,24 @@ class IsoImage:
         length = f.size - offset if length is None else min(length, f.size - offset)
         start = f.lba * SECTOR + offset
         return self.mm[start : start + length]
+
+    def boot_elf_name(self) -> Optional[str]:
+        """Name of the boot executable (e.g. "SLUS_204.69", "SLPS_251.60").
+
+        Read from SYSTEM.CNF's BOOT2 line (``BOOT2 = cdrom0:\\SLUS_204.69;1``),
+        falling back to the first root file matching the serial pattern.
+        """
+        if "SYSTEM.CNF" in self.files:
+            cnf = self.read_file("SYSTEM.CNF").decode("ascii", "replace")
+            m = re.search(r"BOOT2\s*=\s*cdrom0?:\\?([^;\r\n]+)", cnf)
+            if m:
+                name = m.group(1).strip().split("\\")[-1]
+                if name in self.files:
+                    return name
+        for name, f in self.files.items():
+            if not f.is_dir and BOOT_RE.match(name):
+                return name
+        return None
 
     @property
     def volume_end(self) -> int:

@@ -9,7 +9,7 @@ Usage:
     python cli.py extract --iso GAME.iso --out OUTDIR
                           [--chain 0|1] [--glob 'movie\\*'] [--no-carve] [--code]
     python cli.py classes --iso GAME.iso --out OUTDIR
-    python cli.py browse  --out OUTDIR [--kinds textures,audio,banks,images,text,movies]
+    python cli.py browse  --out OUTDIR [--kinds textures,audio,banks,battle_audio,images,text,movies]
                           [--rate 48000]
     python cli.py verify  --out OUTDIR
     python cli.py patch   --iso GAME.iso --out MODDED.iso
@@ -32,9 +32,14 @@ Usage:
     OUTDIR/manifest.csv                 one row per extracted object
 
 ``browse`` converts the extracted dump into viewable/playable formats under
-``OUTDIR/browse/``: .xtx textures -> PNG (pure Python), .vds/.vdm voice ->
-48 kHz WAV (pure Python), .jpg/.txt copied, and .pss/.ipu movies -> MP4 when
-ffmpeg is available (skipped with a note otherwise; raw .pss plays in VLC).
+``OUTDIR/browse/``: .xtx textures -> PNG (pure Python) plus a disc-wide
+sweep for XTX blobs embedded in effect/scene/UI containers (~3,000 more,
+written to textures_png/_embedded + embedded_textures.csv), .vds/.vdm
+voice -> 48 kHz WAV (pure Python), battle voice/SE banks
+(yamamoto/snd/sed/*.bin) -> per-sample WAVs, .jpg copied + PS2ICON3D .res
+unpacked (icon.sys / .ico), .txt recoded to UTF-8 + string tables sniffed
+out of binary-extension files, and .pss/.ipu movies -> MP4 when ffmpeg is
+available (skipped with a note otherwise; raw .pss plays in VLC).
 
 ``classes`` reads every ``.evt`` event container straight from the disc
 image (no prior extract needed) and lifts the embedded Java class files out
@@ -63,7 +68,7 @@ if hasattr(signal, "SIGPIPE"):
 from carve import scan_layer1
 from chains import CHAINS, ChainReader
 from evt import carve_classes
-from iso9660 import IsoImage
+from iso9660 import BOOT_RE, IsoImage
 from toc import parse_toc
 
 MAGICS = {
@@ -132,8 +137,10 @@ def cmd_extract(args) -> int:
     if args.code:
         cdir = out / "browse" / "code"
         cdir.mkdir(parents=True, exist_ok=True)
+        boot = iso.boot_elf_name()
         for name, f in iso.files.items():
-            if f.is_dir or not (name.endswith((".OVL", ".IRX", ".IMG")) or name.startswith("SLUS")):
+            if f.is_dir or not (name.endswith((".OVL", ".IRX", ".IMG"))
+                                or name == boot or BOOT_RE.match(name)):
                 continue
             dest = cdir / name.replace("\\", "/")
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -386,6 +393,55 @@ def cmd_layer1_patch(args) -> int:
     return 0
 
 
+def cmd_music_export(args) -> int:
+    """Sequenced BGM -> .mid + .sf2 (+ .wav/.flac when numpy is present)."""
+    import ssd
+
+    dump, out = Path(args.dump), Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    try:
+        import ssd_render
+    except ImportError:
+        ssd_render = None
+        print("numpy not available: writing MIDI + SoundFont only", file=sys.stderr)
+    if ssd_render is not None:
+        from browse import detect_ffmpeg
+
+        ssd_render.export_all(dump, out, detect_ffmpeg())
+        return 0
+    banks = []
+    for p in sorted(dump.rglob("*.SWD")) + sorted(dump.rglob("*.SED")):
+        b = ssd.parse_bank(p.read_bytes(), p.stem)
+        if b and b.programs:
+            banks.append((p, b))
+    def match_bank(p, seq):
+        used = seq.used_programs() or {0}
+        for bp, b in banks:                       # exact stem match wins
+            if bp.stem.lower() == p.stem.lower():
+                return b
+        best, best_cov = None, 0.0
+        for bp, b in banks:                       # else best program coverage
+            cov = len(used & set(b.programs)) / len(used)
+            if cov > best_cov:
+                best, best_cov = b, cov
+        return best
+    for p in sorted(dump.rglob("*.SMD")) + sorted(dump.rglob("*.smd")):
+        data = p.read_bytes()
+        if len(data) < 5000:
+            continue
+        seq = ssd.parse_sequence(data, p.stem)
+        if not seq:
+            continue
+        bank = match_bank(p, seq)
+        if bank is None:
+            print(f"  {p.stem}: no matching bank, skipped", file=sys.stderr)
+            continue
+        (out / f"{p.stem}.mid").write_bytes(ssd.sequence_to_midi(seq))
+        (out / f"{p.stem}.sf2").write_bytes(ssd.bank_to_sf2(bank, p.stem))
+        print(f"  {p.stem} ({seq.title!r})")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -398,8 +454,15 @@ def main() -> int:
                      ("subs-template", cmd_subs_template),
                      ("subs-burn", cmd_subs_burn),
                      ("layer1-list", cmd_layer1_list),
-                     ("layer1-patch", cmd_layer1_patch)):
+                     ("layer1-patch", cmd_layer1_patch),
+                     ("music-export", cmd_music_export)):
         p = sub.add_parser(name)
+        if name == "music-export":
+            p.add_argument("--dump", required=True,
+                           help="extracted dump directory (cli.py extract output)")
+            p.add_argument("--out", required=True)
+            p.set_defaults(fn=cmd_music_export)
+            continue
         if name not in ("browse", "subs-template", "subs-burn"):
             p.add_argument("--iso", required=name not in ("verify",))
         p.set_defaults(fn=fn)
@@ -413,7 +476,8 @@ def main() -> int:
         if name in ("classes", "browse", "verify"):
             p.add_argument("--out", required=True)
         if name == "browse":
-            p.add_argument("--kinds", help="comma list: textures,audio,banks,images,text,movies")
+            p.add_argument("--kinds", help="comma list: textures,audio,banks,"
+                           "battle_audio,images,text,movies")
             p.add_argument("--rate", type=int, help="voice sample rate (default 48000)")
         if name == "patch":
             p.add_argument("--out", required=True,

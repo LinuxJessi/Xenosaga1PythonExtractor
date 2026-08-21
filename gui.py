@@ -224,17 +224,27 @@ def build_browse(form):
     out = _str(form, "out")
     if not out:
         raise ValueError("Output directory is required")
-    kinds = [k for k in ("textures", "audio", "banks", "images", "text", "movies")
+    kinds = [k for k in ("textures", "audio", "banks", "battle_audio",
+                         "images", "text", "movies")
              if _bool(form, k)]
     if not kinds:
         raise ValueError("Pick at least one kind to convert")
     args = [*CLI_ARGV, "browse", "--out", out]
-    if len(kinds) < 6:
+    if len(kinds) < 7:
         args += ["--kinds", ",".join(kinds)]
     rate = _str(form, "rate")
     if rate and rate != "48000":
         args += ["--rate", rate]
     return args
+
+
+def build_music_export(form):
+    out = _str(form, "out")
+    if not out:
+        raise ValueError("Output directory is required")
+    dump = str(Path(out) / "dump")
+    music = str(Path(out) / "browse" / "music")
+    return [*CLI_ARGV, "music-export", "--dump", dump, "--out", music]
 
 
 def build_verify(form):
@@ -368,6 +378,7 @@ BUILDERS = {
     "extract":       build_extract,
     "classes":       build_classes,
     "browse":        build_browse,
+    "music-export":  build_music_export,
     "verify":        build_verify,
     "pinkhair":      build_pinkhair,
     "patch":         build_patch,
@@ -1372,6 +1383,8 @@ async function loadStatus() {
                  ['32000', '32000 Hz'], ['24000', '24000 Hz']]},
       {name: 'banks',    label: 'Sound banks', type: 'checkbox', value: true,
        hint: '.swd music/SFX banks → per-instrument WAVs + SMD music catalogue (BGM is sequenced — see README)'},
+      {name: 'battle_audio', label: 'Battle audio', type: 'checkbox', value: true,
+       hint: 'yamamoto/snd/sed .bin battle banks → per-sample WAVs (character/boss battle voices + attack SE)'},
       {name: 'images',   label: 'Images',      type: 'checkbox', value: true,
        hint: 'copy .jpg as-is'},
       {name: 'text',     label: 'Text',        type: 'checkbox', value: true,
@@ -1380,7 +1393,19 @@ async function loadStatus() {
        hint: '.pss/.ipu → MP4 with sound (demuxed from private stream 1), plus separate .video.mp4 / .audio.wav copies'},
     ], 'Convert'));
 
-  cards.appendChild(makeCard(5, 'verify', 'Verify extraction',
+  cards.appendChild(makeCard(5, 'music-export', 'Render the soundtrack (sequenced BGM)',
+    'Rebuilds Yasunori Mitsuda\'s sequenced music from the disc\'s Procyon ' +
+    '<code>.SMD</code> sequences + <code>.SWD</code> wave banks (decoded from the game\'s own ' +
+    'unstripped IOP sound driver). Writes, per track, a standard <code>.mid</code> + a ' +
+    '<code>.sf2</code> SoundFont of the real instruments, and — when NumPy is present — a ' +
+    'rendered <code>.wav</code>/<code>.flac</code> (SPU2 pitch/ADSR/looping emulated) under ' +
+    '<code>OUTDIR/browse/music/</code>. Without NumPy it still writes the MIDI + SoundFont. ' +
+    'Run <em>Extract assets</em> first. Takes a few minutes (it scans every wave bank on the disc).',
+    [
+      {name: 'out', label: 'Output dir', value: defaultOut, pick: {mode: 'dir'}},
+    ], 'Render music'));
+
+  cards.appendChild(makeCard(6, 'verify', 'Verify extraction',
     'Re-checks every row in <code>manifest.csv</code>: file existence, byte size, ' +
     '<code>ARX\\0</code> magic on compressed entries, and content magic for <code>.pss</code> / <code>.jpg</code> / <code>.ipu</code>. ' +
     'Prints a summary line — zero problems means the extraction is clean.',
@@ -1391,7 +1416,7 @@ async function loadStatus() {
   const pinkDefault = defaultIso
     ? defaultIso.replace(/\.iso$/i, '') + ' (PINK).iso' : '';
 
-  cards.appendChild(makeCard(6, 'pinkhair', 'Recolor KOS-MOS\'s hair',
+  cards.appendChild(makeCard(7, 'pinkhair', 'Recolor KOS-MOS\'s hair',
     'The whole mod pipeline in one click: recolors her hair in every carrier on the disc ' +
     '(6 character textures, 2 battle bundles, 4 scene bundles — CLUT palettes <em>and</em> the ' +
     'true-colour strand sheets), then writes a bootable patched ISO. The retail ISO is never ' +
@@ -1410,7 +1435,7 @@ async function loadStatus() {
        hint: 'sweep and report only — write no ISO'},
     ], 'Recolor'));
 
-  cards.appendChild(makeCard(7, 'text-export', 'Export text for translation',
+  cards.appendChild(makeCard(8, 'text-export', 'Export text for translation',
     'Pulls all 914 text objects off the disc into an editable UTF-8 tree: 588 <code>.txt</code> ' +
     '(scene scripts, U.M.N. event dialogue) and 326 <code>.uml</code> U.M.N. mails (their fixed-length ' +
     'text slot; the binary header and attached image ride along untouched). ' +
@@ -1425,7 +1450,7 @@ async function loadStatus() {
        pick: {mode: 'dir'}},
     ], 'Export text'));
 
-  cards.appendChild(makeCard(8, 'text-import', 'Import translated text',
+  cards.appendChild(makeCard(9, 'text-import', 'Import translated text',
     'Re-encodes the edited tree back to Shift-JIS, checks every file against its byte budget ' +
     '(clear per-file errors if anything is over or uses characters Shift-JIS can\'t encode — ' +
     'nothing is written until all files pass), and writes a patched ISO. ' +
@@ -1438,7 +1463,7 @@ async function loadStatus() {
       {name: 'out',  label: 'Output ISO',       placeholder: 'path for the translated ISO copy'},
     ], 'Import text'));
 
-  cards.appendChild(makeCard(9, 'patch', 'Patch disc objects (advanced)',
+  cards.appendChild(makeCard(10, 'patch', 'Patch disc objects (advanced)',
     'Replace any TOC object with a local file and write a modified ISO — the generic ' +
     'repack layer behind the recolor card. Content is given <em>uncompressed</em>; entries the ' +
     'TOC marks compressed are ARX-recompressed with a byte-perfect clone of Monolith\'s packer. ' +
@@ -1451,7 +1476,7 @@ async function loadStatus() {
       {name: 'sets', label: 'Replacements', placeholder: 'chainN:toc\\path=localfile; ...'},
     ], 'Patch'));
 
-  cards.appendChild(makeCard(10, 'subs-template', 'Cutscene subtitles: 1. make a timing skeleton',
+  cards.appendChild(makeCard(11, 'subs-template', 'Cutscene subtitles: 1. make a timing skeleton',
     'FMV cutscenes (the <code>.pss</code> movies) ship with no subtitle track at all — not even in ' +
     'Japanese, so there is nothing to translate, only to author from scratch. This writes a blank, ' +
     'uniformly-timed <code>.srt</code> skeleton as a starting point. Real cue timing needs a human: ' +
@@ -1463,7 +1488,7 @@ async function loadStatus() {
       {name: 'cue_seconds', label: 'Cue length (s)', placeholder: '5'},
     ], 'Write template'));
 
-  cards.appendChild(makeCard(11, 'subs-burn', 'Cutscene subtitles: 2. burn into the movie',
+  cards.appendChild(makeCard(12, 'subs-burn', 'Cutscene subtitles: 2. burn into the movie',
     'Re-encodes the movie with your subtitles hardcoded onto the picture — original English/Japanese ' +
     'audio is kept untouched throughout; only the video is replaced. Requires an ffmpeg build with the ' +
     '<code>subtitles</code> filter (needs libass compiled in — check with ' +
@@ -1479,7 +1504,7 @@ async function loadStatus() {
       {name: 'max_bytes', label: 'Max size (bytes)', placeholder: 'default: source file\'s own size'},
     ], 'Burn subtitles'));
 
-  cards.appendChild(makeCard(12, 'layer1-list', 'Layer-1 movies: list',
+  cards.appendChild(makeCard(13, 'layer1-list', 'Layer-1 movies: list',
     'The 58 full cutscenes live outside the ISO9660 filesystem entirely, addressed by raw sector — ' +
     'this lists them (index, name, sector, byte allocation) so you know what to pass to <em>Layer-1: ' +
     'write back</em>.',
@@ -1487,7 +1512,7 @@ async function loadStatus() {
       {name: 'iso', label: 'Retail ISO', value: defaultIso, pick: {mode: 'file', filter: 'iso'}},
     ], 'List'));
 
-  cards.appendChild(makeCard(13, 'layer1-patch', 'Layer-1 movies: write back (advanced)',
+  cards.appendChild(makeCard(14, 'layer1-patch', 'Layer-1 movies: write back (advanced)',
     'Overwrites one carved layer-1 movie in place, the raw-sector counterpart to <em>Patch disc ' +
     'objects</em> — same in-place-only rule: the replacement cannot exceed the movie\'s recovered ' +
     'allocation (see <em>Layer-1: list</em>), and every write is verified by read-back.',

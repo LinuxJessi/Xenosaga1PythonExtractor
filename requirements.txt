@@ -1,0 +1,6 @@
+# Runtime dependencies for the Xenosaga I extractor kit.
+# The core extract/repack/text/movie pipeline is pure stdlib (+ a bundled
+# ffmpeg for movie/audio conversion — see packaging/). numpy is needed only
+# for `cli.py music-export` WAV/FLAC rendering (ssd_render.py); without it,
+# music-export still emits MIDI + SoundFont2.
+numpy>=1.24

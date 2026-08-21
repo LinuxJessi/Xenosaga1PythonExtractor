@@ -161,6 +161,26 @@ Two disc facts worth knowing even if you never mod anything:
   The `classes` command lifts out ~2,200 classes ready for `javap` or any
   decompiler. Full story: [docs/JAVA.md](docs/JAVA.md).
 
+### Region compatibility
+
+The kit is developed and verified against the **USA release (SLUS-20469)**.
+Nothing in it is hardwired to that serial: the boot executable is
+auto-detected from `SYSTEM.CNF` (so the Japanese `SLPS_251.60` — and the
+PlayStation 2 the Best reprint `SLPS_732.01` — are picked up the same way),
+the ISO filesystem and chain TOCs are parsed generically, and game text is
+already decoded as Shift-JIS. The Japanese release is therefore *expected*
+to extract, but it has not been tested against a real JP disc. Things that
+would surface first if the JP master differs (please report an issue with
+the exact error if you hit one):
+
+* the bigfile names `XENOSAGA.00`–`.13` (a rename raises
+  `FileNotFoundError` from `chains.py` immediately);
+* the TOC filler string `MONOLITHSOFT Xenosaga Episode.1` (a different
+  filler makes `toc.py` fail at the end of the index);
+* `pinkhair.py`'s hand-tuned palette coordinates (cosmetic mod only);
+* symbol dumping, if the JP executables shipped stripped (they are then
+  skipped rather than crashing).
+
 ---
 
 ## Command line quick start
@@ -188,7 +208,10 @@ out/
 ```
 
 `dump/` is the disc as the game sees it; `browse` then builds a
-human-readable mirror next to it (PNG/WAV/MP4/UTF-8). A guided tour of
+human-readable mirror next to it (PNG/WAV/MP4/UTF-8) — including a
+disc-wide sweep that pulls ~1,400 more textures out of the effect/scene/UI
+containers (`browse/textures_png/_embedded/`), the PS2 memory-card icon
+resource, and string tables sniffed out of binary files. A guided tour of
 what's in there — including the **eight developers' personal folders that
 shipped on the retail disc** — is in [docs/BROWSING.md](docs/BROWSING.md).
 
@@ -257,7 +280,9 @@ Decoded and converted by `browse`:
 
 * **Textures** (`.xtx` → PNG) — raw PS2 GS-memory images: swizzled 8-bit
   indexed regions plus true-colour regions on one canvas, palettes
-  resolved via the paired `.lex` model materials or corner-scan.
+  resolved via the paired `.lex` model materials, the consuming overlay's
+  texture descriptors (extract with `--code` to enable), or corner-scan;
+  candidates are ranked by how coherently they render.
 * **Streamed voice** (`.vds`/`.vdm`/`.vda` → WAV) — headerless PS2 SPU
   ADPCM, stereo interleaved every 0x400 bytes, 48 kHz. (If a decode ever
   sounds slow/echoey/choppy, the interleave is wrong — not the rate.)
@@ -265,6 +290,11 @@ Decoded and converted by `browse`:
   builds) — including the audio track ffmpeg itself misparses; movies
   with sound also emit separate video-only MP4 and audio WAV for
   undub/redub work.
+* **Battle voices & attack SE** (`yamamoto/snd/sed/*.bin` → WAV) — the
+  lines characters and bosses shout in battle plus every attack sound:
+  535 per-combatant banks (`km_` KOS-MOS, `so_` Shion, `jr_` Jr.,
+  `mo_` MOMO, `cs_` chaos, `z8_` Ziggy, `boss*`, `et*` enemy techs)
+  → ~1,500 WAVs at each sample's native rate, stereo pairs stitched.
 * **Game text** (Shift-JIS `.txt` → UTF-8) — readable instead of mojibake.
 * **Cutscene scripts** (`.evt` → `.class`) — decompile with `javap -c -p`,
   CFR, or Krakatau.
@@ -276,7 +306,8 @@ Decoded and converted by `browse`:
 Not done yet: real titles for the 58 layer-1 movies (needs the playback
 table in the ELF), an SMD synth, full palette coverage for multi-palette
 sprite atlases, `.lex` mesh geometry export (xenotool does OBJ),
-`.esd`/`.esp`/`.sed`/`.jnt` decoders. Formats and evidence:
+`.esd`/`.esp`/`.jnt` decoders (battle `.sed` sample extraction is done;
+the `seds` program metadata — which sample plays on which event — isn't). Formats and evidence:
 [docs/FORMATS.md](docs/FORMATS.md).
 
 ## Building the packaged app
