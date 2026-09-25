@@ -210,7 +210,8 @@ out/
 `dump/` is the disc as the game sees it; `browse` then builds a
 human-readable mirror next to it (PNG/WAV/MP4/UTF-8) — including a
 disc-wide sweep that pulls ~1,400 more textures out of the effect/scene/UI
-containers (`browse/textures_png/_embedded/`), the PS2 memory-card icon
+containers (`browse/textures_png/_embedded/`; scene archives are
+ARX-packed in place and get decompressed first), the PS2 memory-card icon
 resource, and string tables sniffed out of binary files. A guided tour of
 what's in there — including the **eight developers' personal folders that
 shipped on the retail disc** — is in [docs/BROWSING.md](docs/BROWSING.md).

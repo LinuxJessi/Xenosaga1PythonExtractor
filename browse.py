@@ -31,9 +31,14 @@ after ``extract`` has produced ``OUTDIR/dump/``, this builds a sibling
   count 1-64, in-bounds header table). Effect libraries (``.esd``/``.esp``),
   scene archives (``.a``), battle data (``.bin``) and the NLNK/NBGL/NBXX UI
   containers (``.npr``/``.rbg``/``.bxx``) carry ~3,000 textures this way —
-  more than the standalone set. Blobs byte-identical to an already-decoded
-  texture are recorded as duplicates, not re-written; the sweep is logged
-  per-carrier in ``browse/embedded_textures.csv``.
+  more than the standalone set. Scene archives, ``.fpk`` packs and ``.arc``
+  bundles keep their members **ARX-compressed in place**; those are
+  decompressed first (``iter_arx_containers``) and the XTX inside are
+  paletted by the ``lex`` models packed beside them, nearest member first.
+  Blobs byte-identical to an already-decoded texture are recorded as
+  duplicates, not re-written; the sweep is logged per-carrier in
+  ``browse/embedded_textures.csv`` (``packed`` = "arx" for members that
+  only exist after decompression).
 
 * ``audio`` — decode ``.vds``/``.vdm`` streamed audio to 16-bit WAV.
 
@@ -689,6 +694,41 @@ def iter_embedded_xtx(data: bytes) -> Iterable[tuple[int, bytes]]:
         i += 4
 
 
+def iter_arx_containers(data: bytes) -> Iterable[tuple[int, int, bytes]]:
+    """Yield ``(offset, span, payload)`` for every ARX container inside ``data``.
+
+    Scene archives (``.a``), ``.fpk`` packs, ``.arc`` bundles and a few
+    ``.bin``/``.npr`` files store their members ARX-compressed in place:
+    a 16-byte header (magic, uncompressed size, container size including
+    the header, 0), the 30-word LUT, then the bit stream. The members —
+    XTX textures, the ``lex`` models that bind their palettes, FPK packs,
+    FL00 event containers — only exist after decompression. Because the
+    ARX coder passes literal words through verbatim, the *header* of a
+    packed XTX still reads as ``XTX\0`` + sane sizes inside the stream,
+    which is exactly the "undecodable in-``.a`` variant" the raw sweep used
+    to report (528 on the retail disc): callers must skip raw hits that
+    fall inside a container's span. A hit must carry a sane header and
+    decompress to exactly the announced size; anything else is skipped.
+    """
+    i, n = 0, len(data)
+    while True:
+        i = data.find(arx.MAGIC, i)
+        if i < 0:
+            return
+        if i + 16 <= n:
+            usize, csize, zero = struct.unpack_from("<III", data, i + 4)
+            if zero == 0 and usize > 0 and 16 + 30 * 4 < csize <= n - i:
+                try:
+                    payload = arx.decompress(data[i:i + csize])
+                except (arx.ARXError, struct.error, ValueError):
+                    payload = b""
+                if len(payload) == usize:
+                    yield i, csize, payload
+                    i += csize
+                    continue
+        i += 4
+
+
 # extensions that never carry embedded XTX art (movies, audio, plain media);
 # everything else in the dump gets swept
 _NO_XTX_CARRIER = (".xtx", ".pss", ".ipu", ".vds", ".vdm", ".jpg", ".jpeg", ".txt")
@@ -1136,29 +1176,55 @@ def build_browse(out_dir: Path, kinds: Iterable[str], rate: int = VOICE_RATE,
             if not data:
                 continue
             rel = src.relative_to(dump)
+            # members compressed in place (scene archives, packs) come first:
+            # their XTX only exist after decompression, and the literal
+            # header words inside a compressed stream must not be taken for
+            # raw hits (that was the old "undecodable in-.a variant")
+            containers = list(iter_arx_containers(data))
+            spans = [(o, o + span) for o, span, _ in containers]
+            lex_pool = [(o, pay) for o, _, pay in containers
+                        if pay[:4] == b"lex\x00"]
+            # (offset label, png stem, blob, lex models, packed?)
+            hits: list[tuple[str, str, bytes, list[bytes], bool]] = []
             for off, blob in iter_embedded_xtx(data):
+                if any(a <= off < b for a, b in spans):
+                    continue
+                hits.append((f"0x{off:x}", f"{off:06x}", blob, [], False))
+            for o, _, pay in containers:
+                bump("textures_embedded_arx")
+                # a scene's textures are paletted by the lex models packed
+                # beside them: nearest member first (its material 0 seeds
+                # the base palette), the rest merged as companions
+                lexes = [lp for _, lp in
+                         sorted(lex_pool, key=lambda t: abs(t[0] - o))]
+                for k, blob in iter_embedded_xtx(pay):
+                    label = f"0x{o:x}" + (f"+0x{k:x}" if k else "")
+                    stem = f"{o:06x}" + (f"_{k:x}" if k else "")
+                    hits.append((label, stem, blob, lexes, True))
+            for label, stem, blob, lexes, packed in hits:
+                pk = "arx" if packed else ""
                 sha = hashlib.sha1(blob).hexdigest()
                 dup = seen.get(sha)
                 if dup is not None:
                     bump("textures_embedded_dup")
-                    rows.append([str(rel), f"0x{off:x}", len(blob), sha[:12],
-                                 "", dup])
+                    rows.append([str(rel), label, len(blob), sha[:12],
+                                 "", dup, pk])
                     continue
-                decoded = decode_xtx(blob)
+                decoded = decode_xtx(blob, lexes)
                 if decoded is None:
                     bump("textures_embedded_undecodable")
-                    rows.append([str(rel), f"0x{off:x}", len(blob), sha[:12],
-                                 "", "(undecodable)"])
+                    rows.append([str(rel), label, len(blob), sha[:12],
+                                 "", "(undecodable)", pk])
                     continue
                 w, h, rgba, source = decoded
-                dest = edir / rel.parent / f"{rel.name}_{off:06x}.png"
+                dest = edir / rel.parent / f"{rel.name}_{stem}.png"
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 write_png(dest, w, h, rgba)
                 seen[sha] = str(dest.relative_to(browse))
                 bump("textures_embedded_png")
                 bump(f"textures_pal_{source}")
-                rows.append([str(rel), f"0x{off:x}", len(blob), sha[:12],
-                             str(dest.relative_to(browse)), ""])
+                rows.append([str(rel), label, len(blob), sha[:12],
+                             str(dest.relative_to(browse)), "", pk])
             if i % 500 == 0:
                 log(f"  {i}/{len(carriers)}  "
                     f"({stats.get('textures_embedded_png', 0)} embedded PNGs so far)")
@@ -1167,12 +1233,13 @@ def build_browse(out_dir: Path, kinds: Iterable[str], rate: int = VOICE_RATE,
             with open(browse / "embedded_textures.csv", "w", newline="") as fh:
                 w = _csv.writer(fh)
                 w.writerow(["carrier", "offset", "size", "sha1",
-                            "written", "duplicate_of"])
+                            "written", "duplicate_of", "packed"])
                 w.writerows(rows)
         log(f"textures: {stats.get('textures_embedded_png', 0)} embedded PNGs "
             f"({stats.get('textures_embedded_dup', 0)} duplicates skipped, "
-            f"{stats.get('textures_embedded_undecodable', 0)} undecodable) "
-            f"-> textures_png/_embedded/ + embedded_textures.csv")
+            f"{stats.get('textures_embedded_undecodable', 0)} undecodable; "
+            f"{stats.get('textures_embedded_arx', 0)} ARX-packed members "
+            f"decompressed) -> textures_png/_embedded/ + embedded_textures.csv")
 
     if "audio" in kinds:
         adir = browse / "audio"

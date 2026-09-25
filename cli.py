@@ -34,7 +34,8 @@ Usage:
 ``browse`` converts the extracted dump into viewable/playable formats under
 ``OUTDIR/browse/``: .xtx textures -> PNG (pure Python) plus a disc-wide
 sweep for XTX blobs embedded in effect/scene/UI containers (~3,000 more,
-written to textures_png/_embedded + embedded_textures.csv), .vds/.vdm
+ARX-packed scene members decompressed first; written to
+textures_png/_embedded + embedded_textures.csv), .vds/.vdm
 voice -> 48 kHz WAV (pure Python), battle voice/SE banks
 (yamamoto/snd/sed/*.bin) -> per-sample WAVs, .jpg copied + PS2ICON3D .res
 unpacked (icon.sys / .ico), .txt recoded to UTF-8 + string tables sniffed

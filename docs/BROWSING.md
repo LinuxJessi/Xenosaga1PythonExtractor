@@ -86,7 +86,7 @@ Each `browse` kind writes one subtree, preserving `dump/` paths:
 | Directory | Count | From | Open with |
 |---|---|---|---|
 | `textures_png/` | 1,269 PNGs | `.xtx` (+ sibling `.lex` palettes) | anything |
-| `textures_png/_embedded/` | 1,365 PNGs (+ CSV manifest) | XTX blobs inside `.esd`/`.esp`/`.a`/`.bin`/`.npr`/`.rbg`/`.bxx` | anything |
+| `textures_png/_embedded/` | 1,363 PNGs (+ CSV manifest) | XTX blobs inside `.esd`/`.esp`/`.a`/`.bin`/`.npr`/`.rbg`/`.bxx` (ARX-packed members decompressed) | anything |
 | `audio/` | 104 WAVs | `.vds`/`.vdm`/`.vda` streams | anything |
 | `soundbanks/` | per-bank WAVs + `smd_catalog.csv` | `.swd`/`.smd` | anything |
 | `text/` | 588 UTF-8 files + 6 sniffed string tables | Shift-JIS `.txt`, text-bearing `.dat`/`.info`/`.res`/… | your editor |
@@ -107,9 +107,12 @@ Highlights per subtree:
   (`title.npr`, `help.npr`, the `.rbg` room backdrops). Each PNG is named
   `<carrier>_<hex offset>.png`; `browse/embedded_textures.csv` maps every
   find (including blobs skipped as byte-identical duplicates of an
-  already-decoded texture). The ~500 "undecodable" rows are all in `.a`
-  archives — an in-engine XTX variant whose sub-image pointers are GS
-  addresses, with pixel data streamed separately.
+  already-decoded texture); `packed` = `arx` marks members that only
+  exist after in-place ARX decompression (the `scene/cf*.a` archives).
+  Those 603 are each scene's private copies of NPC, enemy, object and
+  map textures — every one byte-identical to a standalone `.xtx`, so the
+  CSV records them as duplicates and doubles as a per-scene provenance
+  map (the rows an older build reported as "undecodable").
 * **`text/chain0/karakama/evtitem.dat.strings.txt`** — every event-item
   description; **`text/chain0/tanaka/CASINO.res.strings.txt`** — the casino
   dialogue; the `nisimori/*.info.strings.txt` dev configs keep their

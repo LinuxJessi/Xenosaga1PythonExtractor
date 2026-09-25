@@ -78,16 +78,22 @@ Header size_comp = whole blob length incl. header; unk = 0.
   `scene/cf0210.a`, `cf0740.a`, `cf1800.a`, `cf3140.a` — 12 hair-palette
   carriers total (verified by disc-wide sweep; quarter-row sweep confirms
   no others).
-* **cf*.a re-frames the texture**: XTX magic + sub-header present but the
-  entry layout differs and the canvas is stored with 4-byte inserts at a
-  ~2020-byte effective row stride, so only some 64-byte CLUT rows survive
+* **cf*.a members are ARX-compressed in place** (understood 2026-09-24;
+  see "Scene archives" below). What earlier looked like a "re-framed"
+  canvas with 4-byte inserts at a ~2020-byte stride is the ARX bit
+  stream: the coder passes literal 32-bit words through verbatim with
+  control words interleaved, so only *some* 64-byte CLUT rows survive
   contiguously (cf0210.a: 26/32 half-rows intact, 6 split). A row-level
   sweep alone therefore *partially* patches them — caught in the act via
   PINE RAM forensics: the running game builds the opening-sim KOS-MOS
   from cf0210.a, and its in-RAM CLUT showed exactly the 30 row-patched
-  entries pink and 91 blue. Fix: anchored entry-level (aligned 4-byte
-  value) replacement; safe because the hair ramp shares no exact RGBA
-  word with any other tile in the canvas (verified 0 overlap).
+  entries pink and 91 blue. The shipped fix — anchored entry-level
+  (aligned 4-byte value) replacement — works because every hair-ramp
+  word is a stream literal (none is one of the container's 30 LUT
+  words) and shares no exact RGBA word with any other tile (verified 0
+  overlap). The principled route is decompress → patch → `arx.compress`
+  → write back, which needs the `.a` TOC re-pointed when the container
+  size changes; not built.
 * The engine also bakes scene lighting into CLUTs at load time (RAM
   copies differ from disc in RGB but not alpha), so RAM-vs-file palette
   comparisons must expect tinted variants.
@@ -181,6 +187,51 @@ as CT32 is more coherent, the block is drawn straight from the canvas
 (each canvas pixel = 2x2 output pixels, alpha scaled 7->8 bit). This
 finally renders the KOS-MOS hair band as hair instead of noise.
 Regions failing both readings stay garbled — the remaining static limit.
+
+## Scene archives `.a` (+ `.fpk`, `.arc`) — ARX-packed members (`browse.py: iter_arx_containers`)
+
+`scene/cf*.a` (112 files, one per field scene) is a flat bundle:
+
+```
+u32 count; u32 offset[count]      16-byte-aligned; some entries point INTO a
+                                  member (streaming pages), not all are starts
+record: 0x100 bytes of float data (placement/lighting; not parsed), then
+        the member — usually an ARX container:
+  "ARX\0" u32 usize u32 csize(includes this 16-byte header + 30-word LUT)
+  u32 0; LUT[30]; bit stream          -> arx.decompress(data[o:o+csize])
+member kinds (retail, 112 archives): 1,864 containers = lex 778,
+XTX 603, FPK 483. Uncompressed members exist too (JNT\0 joint tables,
+raw XTX sprites with their own 16x16 palette, raw 256x256 backdrops).
+(`.fpk`, `.arc` and a few `.bin`/`.npr` are whole-file ARX objects the
+TOC layer already decompresses; the 44 `mtnpack/*.arc` are FL00 wrappers
+of motion data, not Java — `carve_classes` finds nothing in them.)
+```
+
+The ARX coder passes literal words through verbatim, so a packed XTX's
+**header survives inside the compressed stream**: `XTX\0`, a plausible
+total size and a sub-image table whose `file_addr` reads as a VIF DIRECT
+code (`0x5000xx01`) — that is what the raw sweep used to report as an
+"in-`.a` XTX variant with GS pointers, pixels streamed separately" (528
+undecodable hits on retail; all of them). There is no such variant. The
+sweep now decompresses every container first (`iter_arx_containers`:
+sane header + decompresses to exactly `usize`), skips raw hits that fall
+inside a container's span, and decodes the XTX members with the `lex`
+members packed beside them as their palette source (nearest member
+first — its material 0 seeds the base palette — the rest merged as
+companions, same as `kosmos_face.lex` on the standalone atlases).
+Result on retail: all 603 decode (0 undecodable) and every one is
+byte-identical to a standalone `char/`, `enemy/`, `obj/`, `map/` or
+`robo/` `.xtx` — each scene packs private copies of what it draws. The
+sweep therefore adds no new art, but `embedded_textures.csv` now maps
+every scene archive to the textures it carries (the "12 copies of the
+KOS-MOS palette" hunt in the Repack notes, answered disc-wide).
+
+Dead ends worth not repeating: the "GS pointer" fields ARE consistent
+(`size` = (w*h*4+32)/16 qwords, addresses chain with no gaps) because
+they are the real header words; decoding the bytes after them as pixels
+finds coherent-looking art for the first ~60 KB (the stream's literal
+words are mostly pixel data) and then noise — the compressed stream is
+shorter than the texture, so the "pixels" run into the next member.
 
 ## LEX models — materials only (`browse.py: lex_materials`) — via xenotool
 

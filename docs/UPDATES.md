@@ -3,6 +3,43 @@
 Newest first. Each entry lists what changed, why, and what you have to do
 to benefit from it.
 
+## 2026-09-24 — scene-archive textures: the "undecodable variant" was ARX
+
+The ~500 embedded XTX hits the sweep reported as *undecodable* (all in
+`scene/cf*.a`) were never a texture variant. Scene archives, `.fpk`
+packs and `.arc` bundles keep their members **ARX-compressed in place**,
+and the ARX coder passes literal words through verbatim — so a packed
+texture's *header* still reads as `XTX\0` plus sane sizes inside the
+compressed stream, while its pixels do not exist until decompression.
+
+* `browse --kinds textures` now decompresses every in-file ARX container
+  first (`browse.py: iter_arx_containers`; 1,864 inside the 112 retail
+  scene archives: 603 XTX, 778 `lex` models, 483 FPK packs), decodes
+  the XTX members, and palettes them with the `lex` models packed beside
+  them (nearest member first). Raw hits inside a container's span are
+  skipped, so the bogus rows are gone — and so are two "textures" the
+  old sweep had decoded out of the middle of a compressed stream
+  (`cf3021.a_208e4c`, `cf3070.a_61690c`: garbage).
+* Retail result: **1,363 embedded PNGs, 1,696 duplicates skipped, 0
+  undecodable** (was 1,365 / 1,095 / 528). Nothing new to *look at*:
+  all 603 packed textures are byte-identical copies of standalone
+  `.xtx` you already have — the NPC skins (`char/`, 266), enemies
+  (`enemy/`, 197), objects (`obj/`, 66), map atlases (`map/`, 65) and
+  mechs (`robo/`, 9) each field scene packs for itself. What is new is
+  the **provenance map**: `browse/embedded_textures.csv` now lists, per
+  scene archive, every texture it carries and which standalone PNG it
+  equals (`packed` = `arx`). That is the query the recolor tooling
+  needed by hand ("which `cf*.a` carry KOS-MOS's palette?"), answered
+  for every texture on the disc.
+* `docs/FORMATS.md` gets the `.a` archive layout (TOC + 0x100-byte
+  record header + ARX member) and corrects the repack note: the
+  "re-framed canvas with 4-byte inserts" that `pinkhair.py` works around
+  is the ARX bit stream (the entry-level sweep works because the hair
+  words are stream literals).
+
+To pick this up: re-run `browse --kinds textures` on an existing dump
+(no re-extract). Pure-Python ARX adds ~2 minutes to the sweep.
+
 ## 2026-08-21 — texture decode overhaul, embedded content sweep, BGM tempo fix
 
 Full retest of the extractor against the retail USA ISO (two complete
