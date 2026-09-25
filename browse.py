@@ -556,7 +556,12 @@ def decode_xtx(data: bytes, lex: bytes | list[bytes] = b"",
                 break
             if _plausible_clut(cand) and all(cand != p for p in pals):
                 pals.append(cand)
-    if base_pal is not None and len(pals) > 1:
+    # Model-bound textures only (a .lex exists), like the raw-CT32 pass: on
+    # lex-less UI sheets every rescue this pass made was wrong (grey blobs
+    # over the card-tutorial text, a noise strip on the casino menu, an
+    # orange tile on the slot machine) — checked 2026-09-24 across all 32
+    # lex-less files where it fired.
+    if base_pal is not None and len(pals) > 1 and lexes:
         for v0 in range(0, H, 64):
             v1 = min(H, v0 + 64)
             for u0 in range(0, W, 64):

@@ -177,6 +177,19 @@ Known residual: kosmos x384-512 y128-256 is plane-packed 4bpp (each
 index byte's two nibbles are two SEPARATE 4bpp images — visor-HUD
 symbol sheet + keypad panel, clean in grayscale) whose 16-colour CLUTs
 are not in the file; needs live-RAM palette capture. Left garbled.
+Lead (2026-09-25): the lex VIF streams carry GS `TEX0` A+D writes
+(u64 value + u64 reg 0x06/0x16). `kosmos.lex` draws PSMT8 from
+tbp 14336/10752 (two VRAM slots), tbw 16, 1024x256, with CLUT pointers
+15208/15212/15216/14968/14972 — which map (`_cbp_to_xy`, relative to
+tbp) onto the canvas tiles (192,112) (208,112) (224,96) (224,80)
+(240,80): ground-truth palettes, no heuristics. No `T4` draw exists in
+any kosmos lex; the 4bpp draws from that slot come from effect
+libraries (`simajiri/esd/eve017.esd`, `eve107.esd`, `boss0185.esd`,
+`scene/cf0680.a`): `TEX0` psm T4, tw 10 th 8, cbp 14400/14401 (canvas
+(128,0)/(136,0) — art, not a parked CLUT: the effects must upload the
+palette themselves). Rendering the nibble planes through the 8x2 words
+at those tiles gives noise, so both the effect-side palette upload and
+the exact PSMT4-in-CT32 nibble layout are still to be derived.
 
 Final pass — raw CT32 regions: a canvas can mix 8bpp paletted art with
 TRUE-COLOUR CT32 pixel regions (KOS-MOS/NPC hair-strand sheets). No

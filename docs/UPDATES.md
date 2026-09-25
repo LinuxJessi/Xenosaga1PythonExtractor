@@ -37,6 +37,27 @@ compressed stream, while its pixels do not exist until decompression.
   is the ARX bit stream (the entry-level sweep works because the hair
   words are stream literals).
 
+## 2026-09-25 — v1.1.1: casino slot regression, block rescue gated
+
+The v1.1.0 release still repainted one tile of the casino slot machine
+(`tanaka/slot_1`, an orange square) that v1.0.0 rendered black. Cause:
+the 64-px **block-rescue** pass (a wrong palette "explains" a near-black
+noise block better than the base palette). Checked across every
+lex-less texture where that pass fired (32 files, 54 blocks): every one
+of those rescues was wrong — grey blobs over the card-tutorial text, a
+noise strip on the casino menu, the orange tile. The pass now runs only
+for model-bound textures (a `.lex` exists), the same gate as the
+raw-CT32 pass below. Verified through the real pipeline: all 114
+`char/pc` + `char/npc` atlases byte-identical; the casino sheets now
+differ from v1.0.0 only by the blanked palette squares (issue #1) and by
+the sheets v1.0.0 got wrong (data viewer, slot frame).
+
+Still open on the KOS-MOS atlas: the two plane-packed 4bpp visor-HUD
+sheets. New lead recorded in FORMATS.md: they are drawn by *effect*
+libraries (`simajiri/esd/eve017.esd`, `eve107.esd`, `boss0185.esd`,
+`scene/cf0680.a`) as PSMT4 from the character VRAM slot with CLUT
+pointers 14400/14401 — palettes those effects bring themselves.
+
 ### Casino regression fixed (raw-CT32 pass gated)
 
 Verifying issue #1 against the July build turned up a regression from
