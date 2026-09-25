@@ -271,6 +271,7 @@ reimplemented from the docs alone.
 | [docs/MODDING.md](docs/MODDING.md) | how the repack layer works, byte by byte — patching, recoloring, translating, verifying |
 | [docs/SUBTITLES.md](docs/SUBTITLES.md) | authoring and burning FMV cutscene subtitles — what's verified vs. what still needs a PCSX2/hardware check |
 | [docs/FORMATS.md](docs/FORMATS.md) | byte-level format reference (TOC, ARX, XTX, LEX, FL00, audio, movies) with verification evidence |
+| [docs/MUSIC.md](docs/MUSIC.md) | how the sequenced score works — SMD/SWD, the unstripped IOP driver, MIDI/SoundFont/WAV export — with the fun facts the disc gave up |
 | [docs/JAVA.md](docs/JAVA.md) | the headline find: cutscenes as JDK 1.1 Java, and how to decompile them |
 | [docs/FINDS.md](docs/FINDS.md) | easter eggs and dev leftovers — staff folders on the retail disc, debug tools in shipped cutscenes, Gamera |
 | [docs/HISTORY.md](docs/HISTORY.md) | what this disc records about Monolith Soft in 2002 |
