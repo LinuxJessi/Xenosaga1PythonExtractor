@@ -138,6 +138,14 @@ two middle 8-entry runs of each 32). PS2 alpha is 7-bit: scale
    (176,240), (112,64), (128,0); then the 16px grid bottom-right first;
    then the 8px grid (CBPs can address half-block-aligned tiles).
 
+For textures without a `.lex` (UI sheets) the first conventional-spot
+candidate wins over the ranked one when it renders 50–95 % opaque and
+is, transparency penalty aside, about as coherent as the winner (or the
+winner renders the sheet nearly flat): frame-like sheets park their own
+CLUT at a corner spot, and the penalty below otherwise hands them a
+washed-out palette meant for another sub-image (casino slot frame,
+window, pay table; 2026-09-25).
+
 Choosing between palette candidates uses a noise metric
 (`_region_noise`): mean L1 RGB distance between horizontally adjacent
 opaque pixels — the correct palette renders coherent art (low), a wrong

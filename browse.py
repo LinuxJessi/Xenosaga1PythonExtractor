@@ -321,6 +321,24 @@ def _rgba_noise(buf, stride: int, u0: int, u1: int, v0: int, v1: int) -> float:
     return (adj / adjn) / fbar
 
 
+def _far_contrast(idx: bytearray, W: int, pal: list[bytes],
+                  u0: int, u1: int, v0: int, v1: int) -> float:
+    """Mean L1 RGB distance between opaque pixels 16 apart (rows sampled)
+    under a palette — the absolute contrast the coherence ratio divides
+    by. Near zero means the palette renders the region as a flat sheet."""
+    far = farn = 0
+    for v in range(v0, v1, 4):
+        irow = v * W
+        for u in range(u0, u1 - 16, 2):
+            p = pal[idx[irow + u]]
+            q = pal[idx[irow + u + 16]]
+            if p[3] and q[3]:
+                far += (abs(p[0] - q[0]) + abs(p[1] - q[1])
+                        + abs(p[2] - q[2]))
+                farn += 1
+    return far / farn if farn else 0.0
+
+
 def _candidate_score(idx: bytearray, W: int, H: int, pal: list[bytes]) -> float:
     """Whole-image score for a BASE-palette candidate: coherence ratio plus
     a stiff penalty for transparency, so a palette cannot win by hiding
@@ -498,6 +516,30 @@ def decode_xtx(data: bytes, lex: bytes | list[bytes] = b"",
             tried += 1
             if tried >= 24 or best < 0.45:
                 break
+    # UI sheets (no model): the artists park the sheet's own CLUT at one of
+    # the conventional corner spots, and the sheet often has transparent
+    # cut-outs (slot-reel windows, the window frame). The ranking above
+    # penalises transparency — right for character atlases, where a wrong
+    # palette hides garbage behind alpha 0, wrong here: on the casino slot
+    # frame and window sheet it preferred washed-out grey palettes parked
+    # for other sub-images. When the first conventional-spot palette is
+    # a frame-like render (50-95 % opaque) and, penalty aside, about as
+    # coherent as the ranked winner, keep it — the v1.0.0 first-hit
+    # behaviour that was right on those sheets.
+    if not lexes and base_pal is not None and source in ("ovl", "scan"):
+        for cand, xy in _scan_for_clut(canvas, clen):
+            if not _plausible_clut(cand):
+                continue
+            if cand != base_pal:
+                ratio_f, opq_f = _region_noise(idx, W, cand, 0, W, 0, H)
+                ratio_b, _ = _region_noise(idx, W, base_pal, 0, W, 0, H)
+                # a ranked winner that renders the sheet nearly flat (the
+                # window sheet's pick was near-black) is no evidence at all
+                flat_b = _far_contrast(idx, W, base_pal, 0, W, 0, H) < 12.0
+                if 0.5 <= opq_f < 0.95 and (ratio_f <= ratio_b * 1.25
+                                             or flat_b):
+                    base_pal, pal_xy, source = cand, xy, "scan"
+            break
     base_lut = ([bytes(p) for p in base_pal] if base_pal
                 else [bytes((i, i, i, 255)) for i in range(256)])
 
