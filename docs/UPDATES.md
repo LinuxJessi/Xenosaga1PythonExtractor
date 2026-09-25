@@ -37,6 +37,20 @@ compressed stream, while its pixels do not exist until decompression.
   is the ARX bit stream (the entry-level sweep works because the hair
   words are stream literals).
 
+### Casino regression fixed (raw-CT32 pass gated)
+
+Verifying issue #1 against the July build turned up a regression from
+the 2026-08-21 decoder: the raw-CT32 pass (which draws true-colour
+hair sheets straight from the canvas) also fired on lex-less UI sheets,
+where dithered 8bpp art — two indices alternating — reads as a
+"coherent" checker when taken as CT32. The casino slot reels
+(`tanaka/slot_1`) came out blue/yellow checkered and the poker felt
+(`tanaka/poker_1`) half garbled. The pass now runs only for model-bound
+textures (a `.lex` exists); verified byte-identical output on all 114
+`char/pc` + `char/npc` atlases, clean reels and felt. Still imperfect in
+the casino: `base.png` (slot symbol sheet) is tinted by a wrong overlay
+palette, as it was in every build.
+
 To pick this up: re-run `browse --kinds textures` on an existing dump
 (no re-extract). Pure-Python ARX adds ~2 minutes to the sweep.
 

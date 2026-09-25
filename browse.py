@@ -620,7 +620,12 @@ def decode_xtx(data: bytes, lex: bytes | list[bytes] = b"",
     # block on the KOS-MOS atlas measures below that) but the canvas read
     # directly as CT32 is more coherent, draw the block from the canvas —
     # each canvas pixel covers 2x2 output pixels.
-    for v0 in range(0, H, 64):
+    # Only for model-bound textures (a .lex exists): true-colour regions are
+    # a character-model feature, and on the lex-less UI sheets the pass
+    # mis-fired on dithered 8bpp art — the casino slot reels (two indices
+    # alternating) read as a "coherent" checker when taken as CT32 and were
+    # repainted blue/yellow (regression vs the July build, found 2026-09-24).
+    for v0 in (range(0, H, 64) if lexes else ()):
         v1 = min(H, v0 + 64)
         for u0 in range(0, W, 64):
             u1 = min(W, u0 + 64)

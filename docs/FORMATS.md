@@ -185,7 +185,11 @@ still measures as dither noise (`_rgba_noise` ratio >= 0.9; correctly
 paletted blocks measure below that) and the canvas region read directly
 as CT32 is more coherent, the block is drawn straight from the canvas
 (each canvas pixel = 2x2 output pixels, alpha scaled 7->8 bit). This
-finally renders the KOS-MOS hair band as hair instead of noise.
+finally renders the KOS-MOS hair band as hair instead of noise. The pass
+runs only when the texture has a `.lex` (true-colour regions are a
+model feature): on lex-less UI sheets it mis-fired on dithered 8bpp art
+(two indices alternating reads as a coherent checker in CT32) and
+repainted the casino slot reels — regression found 2026-09-24.
 Regions failing both readings stay garbled — the remaining static limit.
 
 ## Scene archives `.a` (+ `.fpk`, `.arc`) — ARX-packed members (`browse.py: iter_arx_containers`)
