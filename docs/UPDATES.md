@@ -10,7 +10,10 @@ for Blender (File ▸ Import ▸ glTF 2.0). You get the mesh, normals, UVs,
 vertex colours and skin-weight groups; face files are merged into their
 bodies and also written alone. The parser (`lex.py`) follows Lakuwu's
 xenotool and was checked against it: KOS-MOS comes out at 3,290
-triangles and 46 weight groups in both. The how-to is
+triangles and 46 weight groups in both. On the retail disc the run
+writes 1,315 `.glb` files (1,145 of them textured) holding 5.15 million
+triangles, 663 MB in all, with 104 face files merged into their bodies,
+nothing unparsed and six files carrying a warning. The how-to is
 [BLENDER.md](BLENDER.md).
 
 **Texture fixes.** Looking at models in Blender showed up four bugs in

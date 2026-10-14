@@ -86,7 +86,7 @@ Each kind of conversion writes one subtree, keeping the `dump/` paths:
 | Directory | Count | From | Open with |
 |---|---|---|---|
 | `textures_png/` | 1,269 PNGs | `.xtx` (+ sibling `.lex` palettes) | anything |
-| `models/` | one `.glb` per `.lex` | `.lex` + its atlas (embedded) | Blender (File ▸ Import ▸ glTF 2.0), any glTF viewer |
+| `models/` | 1,315 `.glb` (663 MB) | `.lex` + its atlas (embedded) | Blender (File ▸ Import ▸ glTF 2.0), any glTF viewer |
 | `textures_png/_embedded/` | 1,363 PNGs (+ CSV manifest) | XTX blobs inside `.esd`/`.esp`/`.a`/`.bin`/`.npr`/`.rbg`/`.bxx` (ARX-packed members decompressed) | anything |
 | `audio/` | 104 WAVs | `.vds`/`.vdm`/`.vda` streams | anything |
 | `soundbanks/` | per-bank WAVs + `smd_catalog.csv` | `.swd`/`.smd` | anything |
