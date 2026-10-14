@@ -112,8 +112,16 @@ sub-image pixels: file_addr + 0x20 (32-byte sub-header first — forgetting
 ```
 
 Decode pipeline: compose each sub-image (raster CT32 rows) onto a CT32
-canvas — 256 px wide for buffer_width 4, 512 for 8 (0 means 8) — at
-x0 = (gs_offset/4096 % (bw/2))*64, y0 = (gs_offset/4096 // (bw/2))*32.
+canvas — clen = 256 px wide for buffer_width 4, 512 for 8 (0 means 8) —
+at y0 = (gs_offset // (clen*32)) * 32, x0 = (gs_offset % (clen*32)) // 32:
+gs_offset counts 32 per pixel column and clen*32 per 32-row band, so a
+second part sits at x = 128 per 4096 and a new row starts at 65536
+(clen 512) / 32768 (clen 256). Fitted on all 166 multi-sub layouts on
+the retail disc. (Until 2026-10-14 the kit used 64-px blocks —
+x0 = (gs/4096 % bw/2)*64 — which put the second half of the 42 two-part
+character atlases (`npc/andrew`, `pc/jr1`, `pc/momo2`, `npc/virgil1` …)
+at x=128 instead of 256, overwriting the first part; those atlases then
+failed their .lex palettes and fell back to a monotone scan palette.)
 Unswizzle the whole canvas as PSMT8 (the widely shared `unswizzle8`
 routine) giving an 8bpp index image at 2x canvas dimensions; crop to the
 max extent of non-palette subs.
@@ -213,6 +221,11 @@ palette themselves). Rendering the nibble planes through the 8x2 words
 at those tiles gives noise, so both the effect-side palette upload and
 the exact PSMT4-in-CT32 nibble layout are still to be derived.
 
+True-colour materials (pal 0xFF) name their raw-CT32 rect in canvas
+coordinates; `lex_truecolor_rects` feeds them to `decode_xtx`, which
+draws those rects from the canvas directly (2x nearest, alpha 7→8 bit).
+The heuristic below only covers what no material names.
+
 Final pass — raw CT32 regions: a canvas can mix 8bpp paletted art with
 TRUE-COLOUR CT32 pixel regions (KOS-MOS/NPC hair-strand sheets). No
 palette can render those. Per 64px output block, if the finished render
@@ -272,30 +285,87 @@ finds coherent-looking art for the first ~60 KB (the stream's literal
 words are mostly pixel data) and then noise — the compressed stream is
 shorter than the texture, so the "pixels" run into the next member.
 
-## LEX models — materials only (`browse.py: lex_materials`) — via xenotool
+## LEX models (`lex.py`) — geometry, materials, skin weights — via xenotool
+
+Structure (Lakuwu's xenotool `lex_file.h`, re-implemented in `lex.py`;
+triangle and weight-group counts byte-checked against xenotool on retail):
 
 ```
-LexHeader 0xB0 bytes; u32 nmesh @ 0x44; mesh addr table (u32 each) @ 0xB0.
-MeshHeader (at each mesh addr): PaletteInfo @ +0x120 (pal2 @ +0x124,
-pal @ +0x125), UVInfo @ +0x130, header is 0x190 bytes.
-palette byte -> canvas coords:
-  palx = (pal>>4 % 2)*256 + (pal&0xF / 2)*32 + (pal2>>7)*16
-  paly = (pal>>4 / 2)*32  + (pal&0xF % 2)*16
-UV types: 0xFF -> umin=x*64+x1*32, vmin=y*64+y1*32, umax=umin+(w+1)*16,
-vmax=vmin+(h+1)*16 (bitfields per xenotool lex_file.h); 0x0A family ->
-umin=(b0&0x3F)<<4, vmin=b2, umax=((b1<<2)|(b0>>6))+1, vmax=((b4<<6)|(b3>>2))+1.
-pal == 0xFF -> no palette (direct). Extra materials inside VIF vertex
-streams are NOT parsed yet — some atlas regions still get a neighbour's
-palette.
+LexHeader 0xB0: magic "lex\0"; name @0x10 (32, "/kosmos"); artist @0x30
+  (15, "takami"); u32 nmatrix @0x40, nmesh @0x44; u32 addr[5] @0x50
+  (addr[0] = matrix table: nmatrix PAIRS of float[16], each pair = a
+  transform and its inverse — row-major, A·B = I); float max[3] @0x70,
+  min[3] @0x80, orig[3] @0x90. Mesh address table (u32 × nmesh) @0xB0.
+MeshHeader 0x190 at each mesh addr: bone_name[32] @0; u32 weight_format
+  @0x20, data_offset @0x24 (0x190), data_len @0x28, bone_idx @0x2C (index
+  into the matrix pairs); u16 bone_table[32] @0x30 (bone_table[0] =
+  bone_idx+1, then the weight-group ids this mesh skins to); float
+  max/min/orig @0x70/0x80/0x90; u8 vertex_format @0xC0 (& 0xF0: 0x80 =
+  floats with normals, 0x10 = no normals, byte colours); MaterialColor
+  3×RGBA floats @0xD0; PaletteInfo @0x120 (pal2 @+4, pal @+5); UVInfo
+  @0x130 (16 B); group_name[32] @0x150; material_name[32] @0x170.
+Mesh data: VU1 display list of VIF codes (u16 imm, u8 num, u8 cmd):
+  0x00 NOP, 0x01 STCYCL, 0x20 STMASK (+4 B), 0x6x/0x7x UNPACK (type =
+  cmd & 0xF: components = (type>>2)+1, bytes = (4,2,1)[type&3]; VU addr
+  = imm & 0x3FF), 0x17 MSCNT = "run the micro-program on what was
+  uploaded" = one strip batch.
+  An UNPACK to addr 0 starts with a 16-B block header: u8 count (strip
+  vertices) @0, u8 format @4, u8 tag @5. tag 0x40 = a MATERIAL BLOCK
+  follows instead of vertices (128 B: 16 unk, UVInfo, PaletteInfo,
+  PaletteInfo, MaterialColor 48, 16 unk — or 64 B without colours): the
+  material for every later strip of this mesh. Otherwise the batch is:
+    vertex_format 0x80: upload A = count × float4 (x,y,z,u) then count ×
+      float4 (nx,ny,nz,v); upload B = count × float4 RGBA (/128 = 1.0);
+      upload C (weights) when weight_format != 0. (A single upload may
+      hold A+B+C back to back.)
+    vertex_format 0x10: A = count × float4 (x,y,z,u); B = count × float v;
+      C/D = colours as bytes (/128) and weights.
+  weight_format 1: C = count × 4 u32 bone refs, then count × 4 float
+    weights; 3: count × 4 u32 refs (weight 1.0 each); 5: per vertex 2 u32
+    refs + 2 float weights. A bone ref r maps to bone_table[r/4 - 184 + 1]
+    (VU address of the bone matrix slot -> weight-group id); 0 = unused.
+    1024 = shape-key data (no skin). Weight-group ids are shared with the
+    .jnt skeleton (KOS-MOS: 46 groups, ids 53-98).
+  Batches whose first UNPACK is NOT to addr 0 (three single-row uploads
+    to 0x3C8/0x3CA/0x3F0) are VU constant uploads, not vertices — skip
+    them (xenotool mis-decodes those as stale-count garbage strips).
+  Strip: triangles (v, v+1, v+2) for v in 0..count-3, winding flipped on
+    odd v. Positions are MODEL SPACE already (KOS-MOS is 1.73 units tall,
+    y up); the matrix table is not needed to assemble the mesh.
+UV: GS ST coordinates — texel = (s × 2^TW, t × 2^TH) with TW/TH from the
+  TEX0 register writes in the model's own VIF streams (`_tex0_size`:
+  u64 value + u64 reg 0x06/0x16; 1024×256 for character sheets) — NOT the
+  decoded atlas size, which can be narrower (Cherenkov 928×256);
+  then wrap each TRIANGLE by whole periods into the material rect (GS
+  region-repeat) — per primitive, not per vertex, or seam triangles tear.
+  True-colour materials (pal 0xFF) give their rect in canvas coordinates:
+  double it (the CT32 hair sheets).
+Materials (UVInfo): type 0x00 = untextured; 0xFF: umin = x*64 + x1*32,
+  vmin = y*64 + y1*32, umax = umin + (w+1)*16, vmax = vmin + (h+1)*16
+  (bitfields per xenotool); 0x0A family: umin = (b0&0x3F)<<4, vmin = b2,
+  umax = ((b1<<2)|(b0>>6))+1, vmax = ((b4<<6)|(b3>>2))+1.
+Palette byte -> canvas tile: palx = (pal>>4 % 2)*256 + (pal&0xF / 2)*32 +
+  (pal2>>7)*16; paly = (pal>>4 / 2)*32 + (pal&0xF % 2)*16; pal == 0xFF ->
+  no palette (true colour). `browse.lex_materials` takes its palette
+  bindings from `lex.parse_lex` — mesh headers AND the VIF-embedded
+  material blocks (a mesh switches palette mid-stream: Cherenkov's
+  jacket draws its sleeves from a second CLUT only the in-stream block
+  names).
+Not decoded: the `.jnt` skeleton (xenotool reads a parent index per
+  0x40-byte block but neither the pose nor the id mapping is solved);
+  vertex formats 0x30/0xA0 (2 map files); weight formats 515/517.
+Export (`lex.py: to_glb`): glTF 2.0 binary, one primitive per
+  (mesh, material), PNG atlas embedded, COLOR_0 vertex colours, a flat
+  skin of identity-bound joints named `j<id>` so Blender gets the vertex
+  groups; per-lex `.glb` under `browse/models/`.
 ```
 
-**Caveat (regression bitten once):** material palx/paly describe *runtime
-VRAM* CLUT slots. For most textures the file canvas is laid out to match,
-but not always — `simajiri/hama.lex` points at (128,0) while the file's
-CLUT tile sits at (64,0), so trusting the pointer paints the image with
-empty canvas (blank output). Every palette read must pass a plausibility
-check (>= 16 distinct RGB values, some nonzero alpha) before use;
-implausible reads fall back embedded-palette -> corner-scan -> grayscale.
+**Caveat:** every palette read must pass a plausibility check (>= 16
+distinct RGB values, some nonzero alpha) before use; implausible reads
+fall back embedded-palette -> overlay -> corner-scan -> grayscale. (The
+old note that `simajiri/hama.lex` "points at (128,0) while the file's
+CLUT tile sits at (64,0)" was the sub-image placement bug above — with
+the correct placement the tile IS at (128,0).)
 
 ## FL00 event containers / Java (`evt.py`)
 

@@ -92,10 +92,10 @@ def xtx_subs(data: bytes, base: int = 0):
 
 def _canvas_to_file(subs, bufw: int, px: int, py: int) -> int:
     """File offset (relative to the XTX start) of canvas pixel (px, py)."""
+    clen = {4: 256, 8: 512}.get(bufw, 512)
     for w, _, h, gs_off, addr in subs:
-        block = gs_off // 4096
-        x0 = (block % (bufw // 2)) * 64
-        y0 = (block // (bufw // 2)) * 32
+        y0 = (gs_off // (clen * 32)) * 32   # same placement rule as browse.decode_xtx
+        x0 = (gs_off % (clen * 32)) // 32
         if x0 <= px < x0 + w and y0 <= py < y0 + h:
             return addr + 32 + ((py - y0) * w + (px - x0)) * 4
     raise ValueError(f"canvas ({px},{py}) not covered by any sub-image")

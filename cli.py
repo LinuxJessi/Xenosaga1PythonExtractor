@@ -9,7 +9,7 @@ Usage:
     python cli.py extract --iso GAME.iso --out OUTDIR
                           [--chain 0|1] [--glob 'movie\\*'] [--no-carve] [--code]
     python cli.py classes --iso GAME.iso --out OUTDIR
-    python cli.py browse  --out OUTDIR [--kinds textures,audio,banks,battle_audio,images,text,movies]
+    python cli.py browse  --out OUTDIR [--kinds textures,models,audio,banks,battle_audio,images,text,movies]
                           [--rate 48000]
     python cli.py verify  --out OUTDIR
     python cli.py patch   --iso GAME.iso --out MODDED.iso
@@ -477,8 +477,8 @@ def main() -> int:
         if name in ("classes", "browse", "verify"):
             p.add_argument("--out", required=True)
         if name == "browse":
-            p.add_argument("--kinds", help="comma list: textures,audio,banks,"
-                           "battle_audio,images,text,movies")
+            p.add_argument("--kinds", help="comma list: textures,models,audio,"
+                           "banks,battle_audio,images,text,movies")
             p.add_argument("--rate", type=int, help="voice sample rate (default 48000)")
         if name == "patch":
             p.add_argument("--out", required=True,

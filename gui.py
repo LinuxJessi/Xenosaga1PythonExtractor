@@ -224,13 +224,13 @@ def build_browse(form):
     out = _str(form, "out")
     if not out:
         raise ValueError("Output directory is required")
-    kinds = [k for k in ("textures", "audio", "banks", "battle_audio",
-                         "images", "text", "movies")
+    kinds = [k for k in ("textures", "models", "audio", "banks",
+                         "battle_audio", "images", "text", "movies")
              if _bool(form, k)]
     if not kinds:
         raise ValueError("Pick at least one kind to convert")
     args = [*CLI_ARGV, "browse", "--out", out]
-    if len(kinds) < 7:
+    if len(kinds) < 8:
         args += ["--kinds", ",".join(kinds)]
     rate = _str(form, "rate")
     if rate and rate != "48000":
@@ -1375,6 +1375,8 @@ async function loadStatus() {
       {name: 'out',      label: 'Output dir',  value: defaultOut, pick: {mode: 'dir'}},
       {name: 'textures', label: 'Textures',    type: 'checkbox', value: true,
        hint: '.xtx → PNG, ARX-compressed ones included (1,269 files, ~2 min)'},
+      {name: 'models',   label: 'Models',      type: 'checkbox', value: true,
+       hint: '.lex → glTF binary (.glb) with the decoded atlas embedded and skin weights — opens in Blender (File ▸ Import ▸ glTF)'},
       {name: 'audio',    label: 'Voice audio', type: 'checkbox', value: true,
        hint: '.vds/.vdm → WAV mono (104 files, ~3 min)'},
       {name: 'rate',     label: 'Voice rate',  type: 'select', value: '48000',

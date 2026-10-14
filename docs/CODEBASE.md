@@ -35,6 +35,7 @@ Two rules shape everything here:
       EXTRACTING   CONVERTING     MODDING        STANDALONE
           │          │              │            evt_unpack.py
       cli.py       browse.py     repack.py       class_map.py
+                   lex.py
       carve.py     evt.py        pinkhair.py     dump_symbols.py
                                  textpack.py
           │          │              │

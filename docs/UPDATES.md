@@ -3,6 +3,103 @@
 Newest first. Each entry lists what changed, why, and what you have to do
 to benefit from it.
 
+## 2026-10-14 — textures: true-colour regions from the model, not a guess
+
+Albedo's white hair came out half beige: hair sheets are raw CT32 pixels
+on the canvas, and v1.1.0 found them with a per-64-px-block noise test
+that fired on only some of his blocks. The model names them outright
+(`pal == 0xFF` materials, rect in canvas pixels), so `decode_xtx` now
+draws every such rect from the canvas as true colour before the block
+heuristic runs (`browse.lex_truecolor_rects`) — only rects in the 0xFF
+canvas-coordinate encoding (the 0x0A texel-space encoding map models use
+mis-scales; MC_SYU01's skyline turned to noise before that restriction),
+only when the raw read is more coherent than the paletted one, and only
+when it actually holds pixels. The block heuristic stays for regions no
+material names. Net effect over all 1,019 model-bound atlases against
+v1.1.0 after today's three texture fixes: 756 change, model-palette
+decodes 790 → 940, corner-scan fallbacks 155 → 14, every opacity drop
+inspected and found to be an improvement.
+
+## 2026-10-14 — textures: materials spliced into the vertex streams
+
+Cherenkov's sleeves came out orange: his jacket mesh switches palette
+mid-stream to draw them, and that second material lives in a block
+spliced into the VIF vertex stream — the "extra materials inside the
+VIF streams are NOT parsed" thread FORMATS.md had carried since v1.0.0.
+`browse.lex_materials` now takes its materials from `lex.parse_lex`
+(mesh headers plus every in-stream block), so each such region gets the
+palette the model binds to it. The header-only read remains as a
+fallback. Verified by rendering all 1,019 model-bound atlases on the
+disc with the previous and the new decoder: 690 change; palette source
+"lex" rises from 790 to 940 files and the corner-scan fallback falls
+from 155 to 14. A 31-file stratified sample and all 17 files whose
+opacity dropped were checked by eye: NPC skins that were noise are now
+faces and armour, map atlases become readable corridor and floor art,
+the KOS-MOS alternate atlas regains its "VECTOR kos-mos" label; the
+seven tiny card-game phase banners were unreadable before and after.
+
+Also in `lex.py`: UVs are scaled by the TEX0 texture size the model
+declares (1024×256 for character sheets), not by the decoded atlas width
+— Cherenkov's atlas is 928 wide, KOS-MOS's happens to be 1024, which is
+why she looked right and he did not.
+
+## 2026-10-14 — textures: two-part character atlases were self-overwriting
+
+Opening Cherenkov (`char/npc/andrew`) in Blender showed him in one sepia
+tone. The cause was in the texture decoder, not the model: `.xtx` files
+with two sub-images (42 character atlases — Cherenkov, Jr. 1, MOMO 2/4/5/6,
+Shion 1/5, Virgil, Van, Joachim, …) had their second part composed at
+canvas x=128 instead of 256, over the first part. The scrambled canvas
+then failed the `.lex` palette check and fell back to a corner-scan
+palette, which is why those 42 rendered as monotone noise since v1.0.0.
+
+* The placement rule is now fitted on every multi-sub layout on the disc
+  (166 of them): `y0 = (gs_offset // (clen*32)) * 32`,
+  `x0 = (gs_offset % (clen*32)) // 32`. Every one of the 219 character
+  atlases now decodes from its own model palettes (was 177).
+* Seventeen UI sheets change too, all for the better: the card-game
+  tutorial pages (`carddata/tuto/Tu_*`) no longer have their text
+  overwritten, `tanaka/slot_1` regains its STOP bar and digit column,
+  `yamamoto/stat/stat` (battle font sheet) and `manu` lose garbage blocks.
+* The FORMATS.md caveat that "`hama.lex` points at (128,0) but the tile
+  is at (64,0)" was this bug; the note is corrected.
+* `pinkhair.py` uses the same rule for its canvas→file mapping.
+
+## 2026-10-14 — models: `.lex` → glTF binary, textured, with skin weights
+
+`browse` has a new kind, **models**: every `.lex` on the disc becomes a
+`.glb` under `browse/models/` (same path as in `dump/`), with the
+decoded atlas PNG embedded, UVs wrapped into each material's region,
+vertex colours, and skin weights as named vertex groups. Blender opens
+them directly (File ▸ Import ▸ glTF 2.0); so does anything else that
+reads glTF.
+
+* `lex.py` (new): `parse_lex` walks the VU1 display list (VIF
+  `UNPACK`/`MSCNT` batches, in-stream material blocks, three weight
+  formats) and `to_glb` writes the file with nothing but the stdlib.
+  The format is Lakuwu's xenotool reverse engineering, re-implemented
+  and verified against xenotool's own counts: KOS-MOS = 3,290
+  triangles / 46 weight groups in both.
+* Fixes relative to xenotool: VU constant-upload batches are skipped
+  instead of decoded as garbage strips; true-colour hair materials get
+  their rect doubled (KOS-MOS's hair is blue, not skin-coloured); a
+  companion model with no atlas of its own (`kosmos_face.lex`) is
+  textured from the sibling atlas it binds onto.
+* `docs/FORMATS.md` § LEX models now has the full byte layout (header,
+  mesh header, VIF batch grammar, weight encodings, UV convention).
+* Companion models (`kosmos_face.lex`: face, eyes, mouth, lashes — no
+  atlas of their own) are merged into the body's `.glb` so the character
+  imports whole, and still written on their own.
+* GUI: a **Models** checkbox on the Convert card. Workflow and what the
+  import gives you: `docs/BLENDER.md`.
+
+Not yet: the `.jnt` skeleton (pose + hierarchy), so the joints import as
+vertex groups on an identity-bound skin rather than a posed armature;
+vertex formats 0x30/0xA0 (two map meshes) are skipped with a warning
+recorded in the `.glb`'s `extras`; the eyelash sheets are 4bpp and still
+undecoded, so lashes export with correct UVs but no usable texture
+(material name `…_lash-4bpp-undecoded`, see `docs/BLENDER.md`).
+
 ## 2026-10-14 — casino sheets: overlay descriptors as materials
 
 The casino UI sheets were the last textures the decoder got visibly

@@ -272,6 +272,7 @@ reimplemented from the docs alone.
 | [docs/SUBTITLES.md](docs/SUBTITLES.md) | authoring and burning FMV cutscene subtitles — what's verified vs. what still needs a PCSX2/hardware check |
 | [docs/FORMATS.md](docs/FORMATS.md) | byte-level format reference (TOC, ARX, XTX, LEX, FL00, audio, movies) with verification evidence |
 | [docs/MUSIC.md](docs/MUSIC.md) | how the sequenced score works — SMD/SWD, the unstripped IOP driver, MIDI/SoundFont/WAV export — with the fun facts the disc gave up |
+| [docs/BLENDER.md](docs/BLENDER.md) | the models in Blender — import, what the objects/materials/vertex groups mean, what the `.jnt` gap means |
 | [docs/JAVA.md](docs/JAVA.md) | the headline find: cutscenes as JDK 1.1 Java, and how to decompile them |
 | [docs/FINDS.md](docs/FINDS.md) | easter eggs and dev leftovers — staff folders on the retail disc, debug tools in shipped cutscenes, Gamera |
 | [docs/HISTORY.md](docs/HISTORY.md) | what this disc records about Monolith Soft in 2002 |
@@ -285,6 +286,10 @@ Decoded and converted by `browse`:
   resolved via the paired `.lex` model materials, the consuming overlay's
   texture descriptors (extract with `--code` to enable), or corner-scan;
   candidates are ranked by how coherently they render.
+* **Models** (`.lex` → `.glb`) — the VU1 display lists decoded to
+  triangles with normals, vertex colours, skin weights and the atlas
+  embedded; one glTF binary per model, straight into Blender. (Format
+  per Lakuwu's xenotool; counts verified against it.)
 * **Streamed voice** (`.vds`/`.vdm`/`.vda` → WAV) — headerless PS2 SPU
   ADPCM, stereo interleaved every 0x400 bytes, 48 kHz. (If a decode ever
   sounds slow/echoey/choppy, the interleave is wrong — not the rate.)
@@ -307,8 +312,8 @@ Decoded and converted by `browse`:
 
 Not done yet: real titles for the 58 layer-1 movies (needs the playback
 table in the ELF), an SMD synth, full palette coverage for multi-palette
-sprite atlases, `.lex` mesh geometry export (xenotool does OBJ),
-`.esd`/`.esp`/`.jnt` decoders (battle `.sed` sample extraction is done;
+sprite atlases, the `.jnt` skeleton (models export with weight groups
+but no posed armature), `.esd`/`.esp` decoders (battle `.sed` sample extraction is done;
 the `seds` program metadata — which sample plays on which event — isn't). Formats and evidence:
 [docs/FORMATS.md](docs/FORMATS.md).
 

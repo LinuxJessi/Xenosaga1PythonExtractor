@@ -90,7 +90,7 @@ from typing import Iterable, Optional
 
 import arx
 
-ALL_KINDS = ("textures", "audio", "banks", "battle_audio", "images", "text", "movies")
+ALL_KINDS = ("textures", "models", "audio", "banks", "battle_audio", "images", "text", "movies")
 
 VOICE_RATE = 48000  # from xeno.Sound.streamPlay(id, 48000, ...) in the .evt scripts
 
@@ -104,18 +104,22 @@ def _png_chunk(tag: bytes, payload: bytes) -> bytes:
             + struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF))
 
 
-def write_png(path: Path, width: int, height: int, rgba: bytes) -> None:
+def png_bytes(width: int, height: int, rgba: bytes) -> bytes:
     raw = bytearray()
     stride = width * 4
     for y in range(height):
         raw.append(0)  # filter: none
         raw += rgba[y * stride : (y + 1) * stride]
-    path.write_bytes(
+    return (
         b"\x89PNG\r\n\x1a\n"
         + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
         + _png_chunk(b"IDAT", zlib.compress(bytes(raw), 6))
         + _png_chunk(b"IEND", b"")
     )
+
+
+def write_png(path: Path, width: int, height: int, rgba: bytes) -> None:
+    path.write_bytes(png_bytes(width, height, rgba))
 
 
 # ---------------------------------------------------------------------------
@@ -363,14 +367,56 @@ def _candidate_score(idx: bytearray, W: int, H: int, pal: list[bytes]) -> float:
 
 
 def lex_materials(lex: bytes) -> list[tuple[int, int, int, int, int, int]]:
-    """(palx, paly, umin, umax, vmin, vmax) per mesh material of a .lex model.
-
-    Reads only the fixed-offset mesh headers (palette byte at +0x125, UV info
-    at +0x130 — layout from xenotool's lex_file.h); the extra material blocks
-    embedded in the VIF vertex streams are not chased.
-    """
+    """(palx, paly, umin, umax, vmin, vmax) per material of a .lex model —
+    the mesh-header materials AND the material blocks spliced into the VIF
+    vertex streams (``lex.parse_lex``; a mesh switches material mid-stream:
+    Cherenkov's jacket mesh draws its sleeves from a second palette that
+    only the in-stream block names). True-colour materials (pal 0xFF) are
+    skipped — they have no palette. Falls back to the header-only read if
+    the stream parse fails."""
     if lex[:4] != b"lex\x00" or len(lex) < 0xB0:
         return []
+    try:
+        import lex as lexmod
+        model = lexmod.parse_lex(lex)
+        mats = []
+        for m in model.materials:
+            if not m.has_texture or m.true_color:
+                continue
+            pal_hi, pal_lo = m.pal >> 4, m.pal & 0xF
+            palx = (pal_hi % 2) * 256 + (pal_lo // 2) * 32 + (m.pal2 >> 7) * 16
+            paly = (pal_hi // 2) * 32 + (pal_lo % 2) * 16
+            mats.append((palx, paly, m.umin, m.umax, m.vmin, m.vmax))
+        if mats:
+            return mats
+    except Exception:
+        pass
+    return _lex_header_materials(lex)
+
+
+def lex_truecolor_rects(lex: bytes) -> list[tuple[int, int, int, int]]:
+    """(umin, umax, vmin, vmax) in CANVAS pixels of every true-colour
+    (pal 0xFF) material of a .lex — regions stored as raw CT32 on the
+    canvas (hair sheets), to be drawn as such instead of through a palette."""
+    if lex[:4] != b"lex\x00":
+        return []
+    try:
+        import lex as lexmod
+        model = lexmod.parse_lex(lex)
+    except Exception:
+        return []
+    # only the 0xFF UV encoding (canvas-coordinate rects: the character
+    # hair sheets); the 0x0A family used by map models gives texel-space
+    # rects that mis-scale here (MC_SYU01's skyline became noise), and the
+    # 0x7F eyelash sheets are 4bpp, not CT32
+    return [(m.umin, m.umax, m.vmin, m.vmax) for m in model.materials
+            if m.true_color and m.has_texture and m.umax > m.umin
+            and m.uv_type == 0xFF]
+
+
+def _lex_header_materials(lex: bytes) -> list[tuple[int, int, int, int, int, int]]:
+    """Header-only material read (fixed-offset mesh headers: palette byte at
+    +0x125, UV info at +0x130 — layout from xenotool's lex_file.h)."""
     (nmesh,) = struct.unpack_from("<I", lex, 0x44)
     if not (0 < nmesh <= 4096):
         return []
@@ -390,9 +436,9 @@ def lex_materials(lex: bytes) -> list[tuple[int, int, int, int, int, int]]:
         if t == 0x00:
             continue
         if t == 0xFF:
-            w, x1, x = b[0] & 0xF, (b[1] >> 3) & 1, b[1] >> 4
-            h, y1, y = b[2] >> 4, b[3] >> 7, b[4] & 0xF
-            umin, vmin = x * 64 + x1 * 32, y * 64 + y1 * 32
+            w, h = b[0] & 0xF, b[2] >> 4
+            umin = b[1] * 4
+            vmin = (b[4] & 0xF) * 64 + (b[3] >> 7) * 32
             umax, vmax = umin + (w + 1) * 16, vmin + (h + 1) * 16
         else:  # 0x0a and friends
             umin = (b[0] & 0x3F) << 4
@@ -446,9 +492,19 @@ def decode_xtx(data: bytes, lex: bytes | list[bytes] = b"",
     placed: list[tuple[int, int, int, int]] = []  # (w, h, x0, y0) per sub
     for w, _, h, gs_off, addr in subs:
         px = data[addr + 32 : addr + 32 + w * h * 4]
-        block = gs_off // 4096
-        x0 = (block % (bufw // 2)) * 64
-        y0 = (block // (bufw // 2)) * 32
+        # sub-image placement in the canvas: gs_off counts 32 per pixel
+        # column and clen*32 per 32-pixel row band — i.e. 4096 per 128-px
+        # column step, 65536 (clen 512) / 32768 (clen 256) per 128-row
+        # step. Fitted on all 166 multi-sub layouts on the retail disc:
+        # the 42 two-part character atlases (andrew, jr1, momo2, virgil1
+        # …: second part at 8192/12288 -> x 256/384) only decode under
+        # their own .lex palettes with this placement, and the parked
+        # 16x16 CLUT tiles at 4096 land at x=128, where the .lex
+        # materials point (the old 64-px block formula put them at 64 —
+        # the "hama.lex points at (128,0) but the tile is at (64,0)"
+        # caveat was this bug, not a VRAM-vs-file mismatch).
+        y0 = (gs_off // (clen * 32)) * 32
+        x0 = (gs_off % (clen * 32)) // 32
         if x0 + w > clen or y0 + h > clen:
             continue
         for y in range(h):
@@ -756,6 +812,40 @@ def decode_xtx(data: bytes, lex: bytes | list[bytes] = b"",
                         best_pal, best_n = mp, n
                 if best_pal is not None:
                     paint(best_pal, u0, u1, v0, v1)
+
+    # true-colour materials named by the model (pal 0xFF): their rect is a
+    # raw CT32 region of the canvas — draw it as such, no heuristic needed
+    # (Albedo's white hair rendered half through a skin palette when the
+    # per-block noise test below fired on only some of its blocks)
+    # — guarded by the same coherence comparison as the block pass: two
+    # map atlases (MC_KAS11, MC_SYU01) declare pal-0xFF rects over
+    # ordinary paletted art, which reads as noise taken as CT32.
+    truecolor = [r for lx in lexes for r in lex_truecolor_rects(lx)]
+    for cu0, cu1, cv0, cv1 in truecolor:
+        cu0, cv0 = max(0, cu0), max(0, cv0)
+        cu1, cv1 = min(clen, cu1, W // 2), min(clen, cv1, H // 2)
+        if cu1 <= cu0 or cv1 <= cv0:
+            continue
+        on = _rgba_noise(out, W, cu0 * 2, cu1 * 2, cv0 * 2, cv1 * 2)
+        cn = _rgba_noise(canvas, clen, cu0, cu1, cv0, cv1)
+        if not (cn < on):
+            continue
+        # and the region must hold pixels: a rect that is mostly alpha-0
+        # as CT32 (MC_SYU01's declared rects) is not a hair sheet
+        opaque = sum(1 for y in range(cv0, cv1, 2) for x in range(cu0, cu1, 2)
+                     if canvas[((y * clen) + x) * 4 + 3])
+        if opaque * 4 < 0.4 * (cu1 - cu0) * (cv1 - cv0):
+            continue
+        for y in range(cv0 * 2, cv1 * 2):
+            drow = y * W * 4
+            crow = (y // 2) * clen
+            for x in range(cu0 * 2, cu1 * 2):
+                o = (crow + x // 2) * 4
+                out[drow + x * 4] = canvas[o]
+                out[drow + x * 4 + 1] = canvas[o + 1]
+                out[drow + x * 4 + 2] = canvas[o + 2]
+                out[drow + x * 4 + 3] = _ALPHA_SCALE[canvas[o + 3]]
+        painted.append((cu0 * 2, cu1 * 2, cv0 * 2, cv1 * 2))
 
     # raw CT32 regions: a canvas can mix 8bpp paletted art with TRUE-COLOUR
     # pixel regions (KOS-MOS's hair-strand sheets — issue #1's last holdout).
@@ -1396,6 +1486,104 @@ def build_browse(out_dir: Path, kinds: Iterable[str], rate: int = VOICE_RATE,
             f"{stats.get('textures_embedded_undecodable', 0)} undecodable; "
             f"{stats.get('textures_embedded_arx', 0)} ARX-packed members "
             f"decompressed) -> textures_png/_embedded/ + embedded_textures.csv")
+
+    if "models" in kinds:
+        import lex as lexmod
+
+        mdir = browse / "models"
+        srcs = list(_dump_files(dump, (".lex",)))
+        xtxs = {s.parent: {x.stem.lower(): x for x in s.parent.glob("*.xtx")}
+                for s in srcs}
+        rect_index = scan_ovl_descriptors(browse / "code")
+        cbp_index = {}
+        for name, descs in rect_index.items():
+            cbps = cbp_index.setdefault(name, [])
+            for d in descs:
+                if d[4] not in cbps:
+                    cbps.append(d[4])
+        # companions: a .lex with no atlas of its own (kosmos_face.lex —
+        # face, eyes, mouth, lashes) binds onto the sibling atlas whose stem
+        # is the longest prefix of its own; its meshes are merged into that
+        # body's .glb (and still written on their own)
+        companions: dict[Path, list[Path]] = {}
+        for s in srcs:
+            stem = s.stem.lower()
+            if stem in xtxs[s.parent]:
+                continue
+            owners = [t for t in xtxs[s.parent] if stem.startswith(t)]
+            if owners:
+                body = s.with_name(xtxs[s.parent][max(owners, key=len)].stem + ".lex")
+                if body.is_file():
+                    companions.setdefault(body, []).append(s)
+        log(f"models: converting {len(srcs)} .lex -> glTF binary "
+            f"({sum(len(v) for v in companions.values())} companion models "
+            f"merged into their bodies) ...")
+        atlas_cache: dict[Path, Optional[tuple[int, int, bytes]]] = {}
+        tri_total = 0
+        for i, src in enumerate(srcs, 1):
+            data = _load(src, bump)
+            if not data:
+                continue
+            try:
+                model = lexmod.parse_lex(data)
+            except lexmod.LexError as e:
+                bump("models_unparsed")
+                log(f"  skip {src.relative_to(dump)}: {e}")
+                continue
+            for comp in sorted(companions.get(src, [])):
+                cdata = _load(comp, bump)
+                try:
+                    cmodel = lexmod.parse_lex(cdata) if cdata else None
+                except lexmod.LexError:
+                    cmodel = None
+                if cmodel is not None:
+                    lexmod.merge_companion(model, cmodel, comp.stem + "/")
+                    bump("models_companions_merged")
+            if not model.triangle_count:
+                bump("models_empty")
+                continue
+            # atlas: own .xtx, else the sibling whose stem is the longest
+            # prefix of this stem (kosmos_face -> kosmos.xtx), decoded with
+            # every .lex that binds onto it (same rule as the textures job)
+            stem = src.stem.lower()
+            siblings = xtxs[src.parent]
+            owners = [t for t in siblings if stem.startswith(t)]
+            atlas = siblings[max(owners, key=len)] if owners else None
+            tex = None
+            if atlas is not None:
+                if atlas not in atlas_cache:
+                    lexes = [_load(atlas.with_suffix(".lex"), bump)] if atlas.with_suffix(".lex").is_file() else []
+                    for lx in sorted(atlas.parent.glob("*.lex")):
+                        ls = lx.stem.lower()
+                        if (ls != atlas.stem.lower() and ls not in siblings
+                                and ls.startswith(atlas.stem.lower())
+                                and max((t for t in siblings if ls.startswith(t)), key=len) == atlas.stem.lower()):
+                            lexes.append(_load(lx, bump))
+                    xdata = _load(atlas, bump)
+                    dec = decode_xtx(xdata, [l for l in lexes if l],
+                                     cbp_index.get(atlas.name.lower()),
+                                     rect_index.get(atlas.name.lower())) if xdata else None
+                    atlas_cache[atlas] = ((dec[0], dec[1], png_bytes(dec[0], dec[1], dec[2]))
+                                          if dec else None)
+                tex = atlas_cache[atlas]
+            glb = lexmod.to_glb(model, tex[2] if tex else None,
+                                (tex[0], tex[1]) if tex else (1024, 256),
+                                name=src.stem)
+            dest = mdir / src.relative_to(dump).with_suffix(".glb")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(glb)
+            tri_total += model.triangle_count
+            bump("models_glb")
+            bump("models_textured" if tex else "models_untextured")
+            if model.warnings:
+                bump("models_with_warnings")
+            if i % 100 == 0:
+                log(f"  {i}/{len(srcs)}  ({src.relative_to(dump)})")
+        log(f"models: {stats.get('models_glb', 0)} .glb written "
+            f"({stats.get('models_textured', 0)} textured, "
+            f"{tri_total:,} triangles; {stats.get('models_companions_merged', 0)} "
+            f"companions merged; {stats.get('models_unparsed', 0)} unparsed, "
+            f"{stats.get('models_with_warnings', 0)} with warnings)")
 
     if "audio" in kinds:
         adir = browse / "audio"
