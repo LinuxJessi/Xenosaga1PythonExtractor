@@ -351,9 +351,8 @@ Palette byte -> canvas tile: palx = (pal>>4 % 2)*256 + (pal&0xF / 2)*32 +
   material blocks (a mesh switches palette mid-stream: Cherenkov's
   jacket draws its sleeves from a second CLUT only the in-stream block
   names).
-Not decoded: the `.jnt` skeleton (xenotool reads a parent index per
-  0x40-byte block but neither the pose nor the id mapping is solved);
-  vertex formats 0x30/0xA0 (2 map files); weight formats 515/517.
+Not decoded: vertex formats 0x30/0xA0 (2 map files); weight formats
+  515/517. The `.jnt` skeleton is decoded (next section).
 Export (`lex.py: to_glb`): glTF 2.0 binary, one primitive per
   (mesh, material), PNG atlas embedded, COLOR_0 vertex colours, a flat
   skin of identity-bound joints named `j<id>` so Blender gets the vertex
@@ -366,6 +365,43 @@ fall back embedded-palette -> overlay -> corner-scan -> grayscale. (The
 old note that `simajiri/hama.lex` "points at (128,0) while the file's
 CLUT tile sits at (64,0)" was the sub-image placement bug above — with
 the correct placement the tile IS at (128,0).)
+
+## JNT skeletons (`lex.py: parse_jnt`) — hierarchy and rest pose
+
+```
+Header 0x20: "JNT\0"; u16 @4 (3); u16 block_count @6; u16 @8 (74 on
+  every file — not a count); u16 @0xA; u16 @0xC; u16 @0xE; u32 table
+  offset @0x10 (0xF0); u16 @0x14; u16 @0x16; name[8] @0x18 ("KOSMOS").
+0x20..table: 52 u32 — [17..42] maps the model's 26 mesh bones (lex
+  bone_idx) to type-1 blocks near the end of the table (0 = none).
+Blocks: 64 bytes each at `table offset`:
+  +0  float, +8 float      per-joint constants (limits?), often 0
+  +16 u16 type             1 offset node, 2 ROTATION JOINT, 3 translate,
+                           4 bone end (pos.x = length), 6 name record
+  +18 u16 flag             0..3 / 6, meaning unknown (not a rotation order)
+  +30 u16 parent           block index; self or out of range = root
+  +32 float3 position      local, metres
+  +48 float3 rotation      local Euler radians, applied as Rz * Ry * Rx
+  type 6: ascii group[8] @+0 ("BODY"/"FACE"), label[16] @+8 ("KUBI")
+Skin joints = the type-2 blocks in order: the k-th weight-group id of the
+model (ids are contiguous per model) is the k-th rotation block —
+checked on 8 models (46/46, 36/36, 26/26, 47/47 …).
+World = parent_world * T(position) * R(rotation). Verified by the
+vertex centroids weighted to each joint: hips/knees/ankles/toes land at
+0.98/0.54/0.16/0.01 m on KOS-MOS, mirrored; face .jnt joints already
+land in body space (eyes within 2 cm of the eye meshes).
+CAVEAT: the file's rest pose is a T-pose with the hair raised; the
+mesh is modelled arms-down, hair-down. Torso, legs, head and face
+joints coincide with the mesh; arm and hair joints sit 0.3–1.2 m from
+their vertices. No Euler order, sign or T/R composition closes that gap
+(brute-forced), so the modelled pose is not stored as joint transforms
+in .jnt or .lex (the lex's 26 matrix pairs are identity). The glTF
+export binds with inverse(rest world), which leaves the mesh exactly as
+stored; posing an arm therefore pivots at the T-pose shoulder.
+Candidates for the bind data: the type-1 "post" blocks the 0x20 table
+points at (big rotations, parented into the arm/hair chains), the
++0/+8 floats, or an animation file not located yet.
+```
 
 ## FL00 event containers / Java (`evt.py`)
 

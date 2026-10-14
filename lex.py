@@ -34,8 +34,8 @@ import struct
 from dataclasses import dataclass, field
 from typing import Optional
 
-__all__ = ["ParsedLex", "LexMesh", "LexMaterial", "parse_lex", "to_glb",
-           "merge_companion", "LexError"]
+__all__ = ["ParsedLex", "LexMesh", "LexMaterial", "Skeleton", "parse_lex",
+           "parse_jnt", "to_glb", "merge_companion", "LexError"]
 
 
 class LexError(ValueError):
@@ -90,10 +90,124 @@ class ParsedLex:
     bounds: tuple                 # (min xyz, max xyz) from the header
     warnings: list[str]
     tex_size: Optional[tuple[int, int]] = None  # GS TEX0 (2^TW, 2^TH) the UVs are relative to
+    companion_joints: dict = field(default_factory=dict)  # joint id -> companion prefix (merged-in parts)
+    companion_skeletons: dict = field(default_factory=dict)  # prefix -> Skeleton (face .jnt; already in body space)
 
     @property
     def triangle_count(self) -> int:
         return sum(len(m.triangles) for m in self.meshes)
+
+
+@dataclass
+class Skeleton:
+    """A ``.jnt`` skeleton: one node per 64-byte block.
+
+    Block layout (fitted on the retail disc, see FORMATS.md): two floats
+    at +0/+8 (limits, unused here); u16 type at +16 (1 offset node,
+    2 rotation joint, 3 translation, 4 bone end, 6 name record); u16
+    parent block index at +30 (self/out of range = root); float3 local
+    position at +32; float3 local rotation at +48, Euler radians applied
+    as Rz * Ry * Rx. Skin weight-group ids map onto the type-2 blocks in
+    order (ids are contiguous per model; the k-th id is the k-th
+    rotation joint)."""
+    name: str
+    types: list[int]
+    parents: list[Optional[int]]
+    positions: list[tuple[float, float, float]]
+    rotations: list[tuple[float, float, float]]
+    names: list[str]            # the type-6 name records, in order
+
+    @property
+    def joint_blocks(self) -> list[int]:
+        return [i for i, t in enumerate(self.types) if t == 2]
+
+    def local_matrix(self, i: int) -> list[list[float]]:
+        return _trs(self.positions[i], self.rotations[i])
+
+    def world_matrices(self) -> list[list[list[float]]]:
+        out: list = [None] * len(self.types)
+
+        def get(i: int, depth: int = 0):
+            if out[i] is not None:
+                return out[i]
+            p = self.parents[i]
+            parent = _IDENT if (p is None or depth > 512) else get(p, depth + 1)
+            out[i] = _matmul(parent, self.local_matrix(i))
+            return out[i]
+
+        for i in range(len(self.types)):
+            get(i)
+        return out
+
+
+_IDENT = [[1.0, 0, 0, 0], [0, 1.0, 0, 0], [0, 0, 1.0, 0], [0, 0, 0, 1.0]]
+
+
+def _matmul(a, b):
+    return [[sum(a[i][k] * b[k][j] for k in range(4)) for j in range(4)] for i in range(4)]
+
+
+def _trs(pos, rot):
+    cx, cy, cz = (math.cos(a) for a in rot)
+    sx, sy, sz = (math.sin(a) for a in rot)
+    rx = [[1, 0, 0], [0, cx, -sx], [0, sx, cx]]
+    ry = [[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]]
+    rz = [[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]]
+    m3 = [[sum(rz[i][k] * ry[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+    m3 = [[sum(m3[i][k] * rx[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+    return [[m3[0][0], m3[0][1], m3[0][2], pos[0]],
+            [m3[1][0], m3[1][1], m3[1][2], pos[1]],
+            [m3[2][0], m3[2][1], m3[2][2], pos[2]],
+            [0.0, 0.0, 0.0, 1.0]]
+
+
+def _invert_rigid(m):
+    """Inverse of a rotation+translation matrix."""
+    r = [[m[j][i] for j in range(3)] for i in range(3)]  # transpose
+    t = [m[0][3], m[1][3], m[2][3]]
+    nt = [-sum(r[i][k] * t[k] for k in range(3)) for i in range(3)]
+    return [[r[0][0], r[0][1], r[0][2], nt[0]],
+            [r[1][0], r[1][1], r[1][2], nt[1]],
+            [r[2][0], r[2][1], r[2][2], nt[2]],
+            [0.0, 0.0, 0.0, 1.0]]
+
+
+def _quat_from_matrix(m) -> tuple[float, float, float, float]:
+    """(x, y, z, w) from a 3x3 rotation (rows of a 4x4)."""
+    t = m[0][0] + m[1][1] + m[2][2]
+    if t > 0:
+        s = math.sqrt(t + 1.0) * 2
+        return ((m[2][1] - m[1][2]) / s, (m[0][2] - m[2][0]) / s, (m[1][0] - m[0][1]) / s, 0.25 * s)
+    if m[0][0] > m[1][1] and m[0][0] > m[2][2]:
+        s = math.sqrt(1.0 + m[0][0] - m[1][1] - m[2][2]) * 2
+        return (0.25 * s, (m[0][1] + m[1][0]) / s, (m[0][2] + m[2][0]) / s, (m[2][1] - m[1][2]) / s)
+    if m[1][1] > m[2][2]:
+        s = math.sqrt(1.0 + m[1][1] - m[0][0] - m[2][2]) * 2
+        return ((m[0][1] + m[1][0]) / s, 0.25 * s, (m[1][2] + m[2][1]) / s, (m[0][2] - m[2][0]) / s)
+    s = math.sqrt(1.0 + m[2][2] - m[0][0] - m[1][1]) * 2
+    return ((m[0][2] + m[2][0]) / s, (m[1][2] + m[2][1]) / s, 0.25 * s, (m[1][0] - m[0][1]) / s)
+
+
+def parse_jnt(data: bytes) -> Skeleton:
+    """Parse a (decompressed) ``JNT\0`` skeleton."""
+    if data[:4] != b"JNT\0" or len(data) < 0x20:
+        raise LexError("not a jnt file")
+    _magic, _u0, count, _a, _b, _c, _d, offset, _e, _f, name = struct.unpack_from("<4sHHHHHHIHH8s", data, 0)
+    if offset + 64 * count > len(data):
+        raise LexError("jnt block table beyond file")
+    types, parents, positions, rotations, names = [], [], [], [], []
+    for i in range(count):
+        b = data[offset + 64 * i: offset + 64 * (i + 1)]
+        t = struct.unpack_from("<H", b, 16)[0]
+        parent = struct.unpack_from("<H", b, 30)[0]
+        types.append(t)
+        parents.append(parent if (parent < count and parent != i) else None)
+        positions.append(struct.unpack_from("<3f", b, 32))
+        rotations.append(struct.unpack_from("<3f", b, 48))
+        if t == 6:
+            group = _cstr(b[0:8]); label = _cstr(b[8:24])
+            names.append(f"{group}/{label}" if group else label)
+    return Skeleton(_cstr(name), types, parents, positions, rotations, names)
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +462,8 @@ def _emit_batch(mesh: LexMesh, blocks, n: int, vfmt: int, wf: int,
         mesh.triangles.append((base + i0, base + i1, base + i2, mat))
 
 
-def merge_companion(main: ParsedLex, other: ParsedLex, prefix: str = "") -> None:
+def merge_companion(main: ParsedLex, other: ParsedLex, prefix: str = "",
+                    skeleton: Optional["Skeleton"] = None) -> None:
     """Append ``other``'s meshes to ``main`` (a companion model such as
     ``kosmos_face.lex`` — face, eyes, mouth, lashes — that shares the
     body's atlas and skeleton ids), remapping material and joint indices.
@@ -358,11 +473,16 @@ def merge_companion(main: ParsedLex, other: ParsedLex, prefix: str = "") -> None
         if m not in main.materials:
             main.materials.append(m)
         mat_map[i] = main.materials.index(m)
+    # companion joint ids live in the companion's own .jnt, so keep them
+    # apart from the body's ids (offset into a private range per companion)
     joint_map = {}
+    tag = 100000 * (1 + len({v for v in main.companion_joints.values()}))
     for i, jid in enumerate(other.joint_ids):
-        if jid not in main.joint_ids:
-            main.joint_ids.append(jid)
-        joint_map[i] = main.joint_ids.index(jid)
+        pjid = tag + jid
+        if pjid not in main.joint_ids:
+            main.joint_ids.append(pjid)
+            main.companion_joints[pjid] = prefix
+        joint_map[i] = main.joint_ids.index(pjid)
     base_index = max((m.index for m in main.meshes), default=-1) + 1
     for mesh in other.meshes:
         mm = LexMesh(base_index + mesh.index, mesh.bone,
@@ -376,6 +496,8 @@ def merge_companion(main: ParsedLex, other: ParsedLex, prefix: str = "") -> None
                      mesh.skipped_batches)
         main.meshes.append(mm)
     main.warnings += [f"{prefix}{w}" for w in other.warnings]
+    if skeleton is not None:
+        main.companion_skeletons[prefix] = skeleton
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +519,7 @@ def _wrap_tri(us, lo, hi):
 
 
 def to_glb(model: ParsedLex, png: Optional[bytes], tex_size: tuple[int, int],
-           name: Optional[str] = None) -> bytes:
+           name: Optional[str] = None, skeleton: Optional[Skeleton] = None) -> bytes:
     """Serialise ``model`` as a glTF 2.0 binary. ``png`` is the decoded
     atlas (``decode_xtx`` output as PNG bytes) or None for an untextured
     model; ``tex_size`` its (width, height) in pixels."""
@@ -530,7 +652,78 @@ def to_glb(model: ParsedLex, png: Optional[bytes], tex_size: tuple[int, int],
         scene_nodes.append(len(nodes) - 1)
 
     skins_json: list[dict] = []
-    if has_skin:
+    if has_skin and skeleton is not None and skeleton.joint_blocks:
+        # the real armature: every .jnt block becomes a node with its local
+        # translation + rotation, parented as the file says; the skin's
+        # joints are the rotation blocks in order (k-th weight-group id ->
+        # k-th rotation block); inverse bind = inverse of the rest-pose
+        # world matrix, since vertices are stored in model space
+        base = len(nodes)
+        worlds = skeleton.world_matrices()
+        jblocks = skeleton.joint_blocks
+        ids_sorted = sorted(j for j in set(model.joint_ids) if j not in model.companion_joints)
+        id_to_block = {jid: jblocks[k] for k, jid in enumerate(ids_sorted) if k < len(jblocks)}
+        block_to_id = {b: j for j, b in id_to_block.items()}
+        kind = {1: "node", 2: "joint", 3: "offset", 4: "end", 6: "name"}
+        for i, t in enumerate(skeleton.types):
+            m = skeleton.local_matrix(i)
+            q = _quat_from_matrix(m)
+            label = (f"j{block_to_id[i]}" if i in block_to_id
+                     else f"{kind.get(t, 'blk')}{i}")
+            nodes.append({"name": label,
+                          "translation": [float(x) for x in skeleton.positions[i]],
+                          "rotation": [float(x) for x in q]})
+        roots = []
+        for i, p in enumerate(skeleton.parents):
+            if p is None:
+                roots.append(base + i)
+            else:
+                nodes[base + p].setdefault("children", []).append(base + i)
+        # companion skeletons (the face .jnt): their joints are already in
+        # body space, so they hang off the same root as separate trees
+        node_of_joint = {jid: base + blk for jid, blk in id_to_block.items()}
+        world_of_joint = {jid: worlds[blk] for jid, blk in id_to_block.items()}
+        for prefix, csk in model.companion_skeletons.items():
+            cbase = len(nodes)
+            cworlds = csk.world_matrices()
+            cids = sorted(j for j, pf in model.companion_joints.items() if pf == prefix)
+            cjb = csk.joint_blocks
+            cmap = {jid: cjb[k] for k, jid in enumerate(cids) if k < len(cjb)}
+            cblock_to_id = {b: j for j, b in cmap.items()}
+            for i, t in enumerate(csk.types):
+                q = _quat_from_matrix(csk.local_matrix(i))
+                label = (f"{prefix}j{cblock_to_id[i] % 100000}" if i in cblock_to_id
+                         else f"{prefix}{kind.get(t, 'blk')}{i}")
+                nodes.append({"name": label,
+                              "translation": [float(x) for x in csk.positions[i]],
+                              "rotation": [float(x) for x in q]})
+            for i, pp in enumerate(csk.parents):
+                if pp is None:
+                    roots.append(cbase + i)
+                else:
+                    nodes[cbase + pp].setdefault("children", []).append(cbase + i)
+            for jid, blk in cmap.items():
+                node_of_joint[jid] = cbase + blk
+                world_of_joint[jid] = cworlds[blk]
+        root = len(nodes)
+        nodes.append({"name": "skeleton", "children": roots})
+        scene_nodes.append(root)
+        # glTF joint order must follow model.joint_ids (the JOINTS_0 index)
+        joint_nodes = []
+        ibm = bytearray()
+        for jid in model.joint_ids:
+            nd = node_of_joint.get(jid)
+            if nd is None:
+                joint_nodes.append(root); ibm += struct.pack("<16f", *(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1))
+                continue
+            joint_nodes.append(nd)
+            inv = _invert_rigid(world_of_joint[jid])
+            ibm += struct.pack("<16f", *[inv[r][c] for c in range(4) for r in range(4)])  # column-major
+        ibv = add_view(bytes(ibm))
+        iba = add_accessor(ibv, 5126, len(joint_nodes), "MAT4")
+        skins_json.append({"name": skeleton.name or "skin", "skeleton": root,
+                           "joints": joint_nodes, "inverseBindMatrices": iba})
+    elif has_skin:
         root = len(nodes)
         nodes.append({"name": "skeleton", "children": []})
         scene_nodes.append(root)

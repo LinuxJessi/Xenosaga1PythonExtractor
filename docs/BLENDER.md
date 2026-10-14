@@ -38,11 +38,17 @@ in `_rgba` and blend; everything else uses a cut-out alpha.
 shading tint. If a model looks too dark, unplug the Color Attribute node
 from Base Color in the material.
 
-**Vertex groups** named `j<number>` on every skinned part, with an
-armature called `skeleton`. The weights are the game's own. The bone
-positions are not decoded yet, so the armature is a flat list of named
-joints at the origin: you can weight-paint or build a rig on top of it,
-but you cannot pose the model as imported.
+**An armature** named after the character, built from the `.jnt`
+skeleton file: the real joint hierarchy with the game's rest pose,
+plus the face file's own small skeleton for eyes and mouth. Skin weights
+are the game's own, as vertex groups named `j<number>` (rotation joints)
+with the offset, translate and bone-end nodes in between. Torso, legs,
+head and face bones sit on the mesh. Arm and hair bones do not: the
+file's rest pose is a T-pose with the hair raised, while the mesh is
+modelled with arms and hair down, and the pose that matches the mesh
+has not been found in the files yet. So the import looks right, the
+legs and head pose correctly, and posing an arm pivots at the T-pose
+shoulder until that is solved.
 
 **Scale.** The game works in metres, Y up, same as glTF. KOS-MOS stands
 1.73 m tall and lands upright on Blender's floor with no scaling.
@@ -67,9 +73,8 @@ the head.
 
 ## Known gaps
 
-* **No skeleton pose yet.** The joints come through as named vertex
-  groups; their positions and hierarchy live in the `.jnt` files, which
-  are the next thing to decode.
+* **Arm and hair bones are in the file's T-pose**, not where the mesh
+  hangs (see above). Everything else on the skeleton lines up.
 * **No eyelashes.** Every character has a lash mesh, but its texture is
   not in the character's own atlas: the rect it points at is only the
   video-memory slot a shared 4-bit lash sheet is uploaded into at

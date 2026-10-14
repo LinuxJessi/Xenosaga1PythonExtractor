@@ -2,6 +2,32 @@
 
 Newest first: what changed, why, and what it means for you.
 
+## 2026-10-14 — skeletons: the `.jnt` files decoded
+
+Models now import into Blender with a real armature instead of a flat
+list of joints. The `.jnt` file is a tree of 64-byte nodes: a type
+(offset, rotation joint, translate, bone end, name), a parent index, a
+local position and a local rotation. The skin's weight groups are the
+rotation joints in order, which checks out on every model tried. The
+face file's own small skeleton comes along for eyes and mouth.
+
+What lines up: torso, legs, head and face. KOS-MOS's hips, knees,
+ankles and toes land at 0.98, 0.54, 0.16 and 0.01 m, mirrored, and her
+eye joints are within two centimetres of the eye meshes. What does not:
+arms and hair. The file's rest pose is a T-pose with the hair raised,
+the mesh is modelled arms-down, and no rotation convention closes that
+gap, so the pose matching the mesh is stored somewhere not found yet.
+The export binds the mesh so it looks exactly as before; posing an arm
+pivots at the T-pose shoulder until that is solved. Byte layout and the
+evidence: [FORMATS.md](FORMATS.md) § JNT skeletons.
+
+**Eyelashes, status.** Still missing. The lash material's rect points
+at a video-memory slot, not at pixels in the character's atlas (the
+slot holds a thin striped column for every character checked), and no
+model file uploads a 4-bit texture there, so a shared lash sheet is
+uploaded by engine code from a file not yet identified. Next lead: a
+RAM dump of the running game around that upload.
+
 ## 2026-10-14 — models in Blender, and the texture fixes that came with them
 
 **Models.** `browse` has a new kind, **Models**: every `.lex` on the disc
