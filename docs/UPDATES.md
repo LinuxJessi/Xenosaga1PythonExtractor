@@ -24,16 +24,18 @@ capture tool (`docs/research/pine_pose.py`) stays in the kit as the way
 that was verified; nobody needs to run it. Byte layout and the evidence:
 [FORMATS.md](FORMATS.md) § JNT skeletons.
 
-**Eyelashes, status.** Still missing, and the RAM session narrowed it
-further: every 4-bit texture upload chain in memory (152 of them, in a
-field scene and in a face close-up) belongs to the battle-effect sprite
-set (REC, DEF, STOP, lightning, flares); none targets a character
-atlas. So the lash pixels are not uploaded as a separate 4-bit tile
-either. The remaining hypothesis is that the lash material reads the
-character atlas itself through a 4-bit view; the GS PSMT4 layout tables
-needed to test that were reconstructed from memory and render the whole
-atlas as noise, so the tables themselves need checking against PCSX2's
-source before that can be settled.
+**Eyelashes: solved.** Every character's lash mesh (UV type `0x7F`,
+flagged true-colour) draws a small true-colour strip of the atlas that
+the decoder had been rendering through a palette: a dark navy gradient
+fading to transparent, which the lash polygons stretch into strokes.
+The decoder now draws those rects as raw true colour unconditionally
+(the coherence guard that protects hair sheets would reject a mostly
+transparent strip), and KOS-MOS has her lashes back
+(`docs/images/kosmos-face.png`). The long detour through "4-bit sheets"
+was wrong: the regions on her atlas that split into two clean 4-bit
+images are 8-bit-swizzled data with two images packed per byte by the
+artists; read with PCSX2's verified GS 4-bit layout they are noise, so
+the game never treats them as 4-bit textures.
 
 ## 2026-10-14 — models in Blender, and the texture fixes that came with them
 

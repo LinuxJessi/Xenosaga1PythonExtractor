@@ -409,9 +409,9 @@ def lex_truecolor_rects(lex: bytes) -> list[tuple[int, int, int, int]]:
     # hair sheets); the 0x0A family used by map models gives texel-space
     # rects that mis-scale here (MC_SYU01's skyline became noise), and the
     # 0x7F eyelash sheets are 4bpp, not CT32
-    return [(m.umin, m.umax, m.vmin, m.vmax) for m in model.materials
+    return [(m.umin, m.umax, m.vmin, m.vmax, m.uv_type == 0x7F) for m in model.materials
             if m.true_color and m.has_texture and m.umax > m.umin
-            and m.uv_type == 0xFF]
+            and m.uv_type in (0xFF, 0x7F)]
 
 
 def _lex_header_materials(lex: bytes) -> list[tuple[int, int, int, int, int, int]]:
@@ -820,22 +820,26 @@ def decode_xtx(data: bytes, lex: bytes | list[bytes] = b"",
     # — guarded by the same coherence comparison as the block pass: two
     # map atlases (MC_KAS11, MC_SYU01) declare pal-0xFF rects over
     # ordinary paletted art, which reads as noise taken as CT32.
+    # Eyelash rects (UV type 0x7F) are drawn unconditionally: the sheet is
+    # a mostly transparent dark alpha gradient the lash polygons stretch
+    # into strokes, which the coherence/opacity guard would reject.
     truecolor = [r for lx in lexes for r in lex_truecolor_rects(lx)]
-    for cu0, cu1, cv0, cv1 in truecolor:
+    for cu0, cu1, cv0, cv1, is_lash in truecolor:
         cu0, cv0 = max(0, cu0), max(0, cv0)
         cu1, cv1 = min(clen, cu1, W // 2), min(clen, cv1, H // 2)
         if cu1 <= cu0 or cv1 <= cv0:
             continue
-        on = _rgba_noise(out, W, cu0 * 2, cu1 * 2, cv0 * 2, cv1 * 2)
-        cn = _rgba_noise(canvas, clen, cu0, cu1, cv0, cv1)
-        if not (cn < on):
-            continue
-        # and the region must hold pixels: a rect that is mostly alpha-0
-        # as CT32 (MC_SYU01's declared rects) is not a hair sheet
-        opaque = sum(1 for y in range(cv0, cv1, 2) for x in range(cu0, cu1, 2)
-                     if canvas[((y * clen) + x) * 4 + 3])
-        if opaque * 4 < 0.4 * (cu1 - cu0) * (cv1 - cv0):
-            continue
+        if not is_lash:
+            on = _rgba_noise(out, W, cu0 * 2, cu1 * 2, cv0 * 2, cv1 * 2)
+            cn = _rgba_noise(canvas, clen, cu0, cu1, cv0, cv1)
+            if not (cn < on):
+                continue
+            # and the region must hold pixels: a rect that is mostly alpha-0
+            # as CT32 (MC_SYU01's declared rects) is not a hair sheet
+            opaque = sum(1 for y in range(cv0, cv1, 2) for x in range(cu0, cu1, 2)
+                         if canvas[((y * clen) + x) * 4 + 3])
+            if opaque * 4 < 0.4 * (cu1 - cu0) * (cv1 - cv0):
+                continue
         for y in range(cv0 * 2, cv1 * 2):
             drow = y * W * 4
             crow = (y // 2) * clen

@@ -52,7 +52,7 @@ class LexMaterial:
     pal2: int
     has_texture: bool
     color: tuple = ()  # 12 floats: three RGBA material colours
-    uv_type: int = 0   # UVInfo type byte (0x7F = eyelash sheet, 4bpp)
+    uv_type: int = 0   # UVInfo type byte (0x7F = eyelash material: true-colour alpha gradient)
 
     @property
     def true_color(self) -> bool:
@@ -611,7 +611,7 @@ def to_glb(model: ParsedLex, png: Optional[bytes], tex_size: tuple[int, int],
     for i, m in enumerate(model.materials):
         mat = {"name": f"mat{i}_u{m.umin}-{m.umax}_v{m.vmin}-{m.vmax}"
                        + ("_rgba" if m.true_color else "")
-                       + ("_lash-4bpp-undecoded" if m.uv_type == 0x7F else ""),
+                       + ("_lash" if m.uv_type == 0x7F else ""),
                "pbrMetallicRoughness": {"metallicFactor": 0.0,
                                         "roughnessFactor": 0.9},
                "doubleSided": True,
@@ -781,10 +781,6 @@ def to_glb(model: ParsedLex, png: Optional[bytes], tex_size: tuple[int, int],
                            "inverseBindMatrices": iba})
 
     warnings = list(model.warnings)
-    if any(m.uv_type == 0x7F for m in model.materials):
-        warnings.append("eyelash material(s) reference a 4bpp sheet the "
-                        "texture decoder does not read yet; the lashes "
-                        "sample whatever the atlas PNG shows there")
     gltf = {
         "asset": {"version": "2.0",
                   "generator": "Xenosaga1PythonExtractor lex.py"},

@@ -206,7 +206,13 @@ marks a raw CT32 region (KOS-MOS meshes 31-36 = the hair sheets).
 Known residual: kosmos x384-512 y128-256 is plane-packed 4bpp (each
 index byte's two nibbles are two SEPARATE 4bpp images — visor-HUD
 symbol sheet + keypad panel, clean in grayscale) whose 16-colour CLUTs
-are not in the file; needs live-RAM palette capture. Left garbled.
+are not in the file. These are NOT GS PSMT4 textures: read through
+PCSX2's verified PSMT4 block/column tables the region is noise; it is
+PSMT8-swizzled data packed two images per byte by the artists. The
+eyelashes (materials of UV type 0x7F, pal 0xFF) are unrelated to this:
+their rect (umin = b1*4, vmin = (b4&0xF)*64 + (b3>>7)*32, 32x32 canvas
+px) holds a true-colour dark alpha gradient; `decode_xtx` draws it raw
+(unguarded) and the lash polygons stretch it into strokes.
 Lead (2026-09-25): the lex VIF streams carry GS `TEX0` A+D writes
 (u64 value + u64 reg 0x06/0x16). `kosmos.lex` draws PSMT8 from
 tbp 14336/10752 (two VRAM slots), tbw 16, 1024x256, with CLUT pointers

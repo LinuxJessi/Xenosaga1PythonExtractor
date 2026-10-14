@@ -32,7 +32,8 @@ face file are prefixed with that file's name.
 
 **Materials.** Named after the region of the texture they use, like
 `mat3_u256-320_v128-256`. They all share one image. Hair materials end
-in `_rgba` and blend; everything else uses a cut-out alpha.
+in `_rgba` and eyelashes in `_lash`; both blend, everything else uses a
+cut-out alpha.
 
 **Vertex colours** in the `Col` attribute. That is the game's baked-in
 shading tint. If a model looks too dark, unplug the Color Attribute node
@@ -75,12 +76,6 @@ the head.
 
 ## Known gaps
 
-* **No eyelashes.** Every character has a lash mesh, but its texture is
-  not in the character's own atlas: the rect it points at is only the
-  video-memory slot a shared 4-bit lash sheet is uploaded into at
-  runtime, and that sheet has not been found on the disc yet. The
-  lashes are in the file with correct UVs; their material is named
-  `…_lash-4bpp-undecoded` so it is easy to hide.
 * **No animation.** Not located on the disc yet.
 * Two map meshes use vertex formats the parser skips, and blend shapes
   are ignored. Anything skipped is listed in the `.glb`'s `extras`.

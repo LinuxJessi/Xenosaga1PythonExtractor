@@ -20,7 +20,7 @@ The kit ships no game data. You need your own copy of the disc.
   own skeleton files, every bone on the mesh. Faces are merged into
   their bodies.
   How-to and what to expect: [docs/BLENDER.md](docs/BLENDER.md).
-* **Character textures look right.** Opening models in Blender showed
+* **Character textures look right, eyelashes included.** Opening models in Blender showed
   four texture bugs that had been there since the first release, and
   all are fixed: 42 character atlases that came out as beige noise
   (Cherenkov, Jr., MOMO, Shion and Virgil variants among them), sleeves
@@ -40,8 +40,8 @@ The kit ships no game data. You need your own copy of the disc.
   The story of how: [docs/MUSIC.md](docs/MUSIC.md).
 
 Still on the list: animation (the motion packs are located but not
-decoded, so bones pose but do not play), the eyelash textures, and a
-few map meshes in formats the model parser skips. The full change log is in [docs/UPDATES.md](docs/UPDATES.md).
+decoded, so bones pose but do not play) and a few map meshes in formats
+the model parser skips. The full change log is in [docs/UPDATES.md](docs/UPDATES.md).
 
 ## Running it
 
