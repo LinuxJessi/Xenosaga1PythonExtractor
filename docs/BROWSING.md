@@ -1,8 +1,8 @@
-# Browsing the extraction — a guided tour
+# A tour of the output
 
-What you have after running `extract` + `classes` + `browse` against the USA
-disc, and how to poke around in it. Numbers below are from a full extraction
-of SLUS-20469; yours will match.
+This is what you have after running `extract`, `classes` and `browse`,
+and where to look first. The counts are from a full extraction of the
+USA disc; yours will match.
 
 ```
 out/
@@ -12,9 +12,9 @@ out/
   browse/classes_manifest.csv   one row per lifted Java class
 ```
 
-Rule of thumb: **`dump/` is for tools, `browse/` is for humans.** Everything
-in `browse/` is derived from `dump/` (or straight from the ISO) by decoders
-described in [FORMATS.md](FORMATS.md).
+Rule of thumb: **`dump/` is for tools, `browse/` is for people.** Everything
+in `browse/` is made from `dump/` by the decoders described in
+[FORMATS.md](FORMATS.md).
 
 ## The three areas of `dump/`
 
@@ -79,9 +79,9 @@ can be recovered later from the playback code. Sizes run from 2.5 MB
 audio**; they play in VLC/ffplay as-is (video) and convert to proper MP4s
 with `browse --kinds movies`.
 
-## `browse/` — the human-readable mirror
+## `browse/` — the folder you actually open
 
-Each `browse` kind writes one subtree, preserving `dump/` paths:
+Each kind of conversion writes one subtree, keeping the `dump/` paths:
 
 | Directory | Count | From | Open with |
 |---|---|---|---|
@@ -96,11 +96,13 @@ Each `browse` kind writes one subtree, preserving `dump/` paths:
 | `classes/` | ~2,200 `.class` | `.evt` FL00 containers | `javap -c -p`, CFR, Krakatau |
 | `code/` | 19 binaries | ISO filesystem (`--code`) | Ghidra / readelf |
 
-Highlights per subtree:
+Worth opening first:
 
+* **`models/chain0/char/pc/`** — the party in Blender-ready `.glb` files;
+  see [BLENDER.md](BLENDER.md).
 * **`textures_png/chain0/tanaka/`** — 109 casino graphics: slot reels, poker
-  tables, card faces. The single best "wait, this shipped in a folder named
-  after a guy?" browse.
+  tables, card faces. The best "wait, this shipped in a folder named
+  after a guy?" moment on the disc.
 * **`textures_png/chain0/carddata/`** — all 117 card-game faces.
 * **`textures_png/_embedded/`** — the second texture trove: battle-effect
   sheets from the `.esd`/`.esp` effect libraries, scene-archive art from

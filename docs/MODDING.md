@@ -1,10 +1,10 @@
 # Modding Xenosaga Episode I — how the repack layer actually works
 
-This is the mechanics document: everything you need to modify the tools —
-or write your own — **without re-deriving anything**. Byte-level format
-reference lives in [FORMATS.md](FORMATS.md); this file explains how the
-pieces fit and why they are built the way they are. Everything below was
-established and verified on the USA disc (SLUS-20469) in July 2026.
+This is the mechanics document. If you want to change the tools, or
+write your own, it tells you how the pieces fit and why they are built
+the way they are, so you never have to re-derive anything. The
+byte-level format reference is [FORMATS.md](FORMATS.md). Everything here
+was worked out and verified on the USA disc in July 2026.
 
 The worked example throughout is the KOS-MOS hair recolor (`pinkhair.py`),
 because it hit every layer: palettes, true-colour pixels, compression,
