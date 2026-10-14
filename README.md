@@ -103,8 +103,10 @@ Everything on the disc, converted to something you can open.
 **Hear it.** Two short excerpts straight out of the kit, so you know
 what to expect before you run it: the opening of
 [Battle 1, rendered from the sequenced music](docs/media/battle1-excerpt.mp3)
-(15 s) and [a voice line from the streamed cutscene audio](docs/media/voice-line-excerpt.mp3)
-(8 s). Click to play in the browser. Everything else, the full tracks
+(15 s), [a voice line from the streamed cutscene audio](docs/media/voice-line-excerpt.mp3)
+(8 s), and [a string of battle shouts](docs/media/battle-shouts-excerpt.mp3)
+from KOS-MOS, Shion, Jr., MOMO, chaos and Ziggy's attack banks
+(16 s). Click to play in the browser. Everything else, the full tracks
 and all 103 voice streams, comes from your own disc.
 
 **Words and code**
