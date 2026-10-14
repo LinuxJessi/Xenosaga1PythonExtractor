@@ -29,6 +29,10 @@ The kit ships no game data. You need your own copy of the disc.
   concept-art gallery were the last textures that came out wrong. The
   game's menu code says which palette colours which part of a sheet,
   and the kit now reads that. This closes GitHub issue #1.
+* **More to look at and listen to.** Battle shouts and attack sounds,
+  the casino art and gallery sketches, the title and help screens from
+  the menu containers, the memory-card icon, and every string table the
+  kit can sniff out of binary files, including the casino dialogue.
 * **The soundtrack plays.** The sequenced music is rendered to WAV and
   FLAC, with MIDI and SoundFont files alongside, at the right tempo.
   The story of how: [docs/MUSIC.md](docs/MUSIC.md).
@@ -72,17 +76,75 @@ worth opening first, is in [docs/BROWSING.md](docs/BROWSING.md).
 
 ## What you get
 
+Everything on the disc, converted to something you can open.
+
+**Pictures and models**
+
+* Every texture as PNG: characters, enemies, mechs, props, maps, menus,
+  the card game's 117 card faces, and the casino's slot reels, poker
+  tables and the pencil concept sketches hidden in its gallery.
+* 1,400 more textures pulled out of effect, scene and menu containers:
+  battle effects, title and help screens, room backdrops.
+* Every model as a `.glb` with its texture inside, ready for Blender.
+* The 58 full cutscene movies the disc hides on its second layer, as
+  MP4 with sound, plus 189 smaller in-game clips. The boot logos and
+  title art. The memory-card icon.
+
+**Sound**
+
+* Every voice line and cutscene mix as WAV.
+* Every battle shout and attack sound: 535 banks, one per character
+  and boss, about 1,500 WAVs.
+* The whole soundtrack, rendered from the sequenced music the disc
+  actually carries (Yasunori Mitsuda's name is literally in the files),
+  as WAV and FLAC, with the MIDI and SoundFont alongside so you can
+  remix it. [docs/MUSIC.md](docs/MUSIC.md) tells the story.
+
+**Words and code**
+
+* All in-game text as UTF-8: menus, text boxes, the U.M.N. mails, item
+  descriptions, the casino dialogue, and the developers' own Japanese
+  comments left in the scene scripts.
+* The cutscene scripts as Java class files you can decompile and read
+  ([docs/JAVA.md](docs/JAVA.md)).
+* The executables with every function name intact.
+* Eight developers' personal working folders that shipped on the retail
+  disc, test maps and all ([docs/FINDS.md](docs/FINDS.md)).
+
 | | Where | Format |
 |---|---|---|
-| Textures | `browse/textures_png/` | PNG, plus 1,400 more pulled out of effect, scene and menu containers |
-| Models | `browse/models/` | glTF binary (`.glb`) with the texture embedded |
+| Textures | `browse/textures_png/` | PNG |
+| Models | `browse/models/` | glTF binary (`.glb`) |
 | Voices and cutscene audio | `browse/audio/` | WAV |
-| Music | `browse/music/` (the **Render the soundtrack** card, or `music-export`) | WAV, FLAC, MIDI, SoundFont |
 | Battle voices and sound effects | `browse/battle_audio/` | WAV |
-| Cutscene movies | `browse/movies/` | MP4, including the 58 full cutscenes hidden on the disc's second layer |
+| Music | `browse/music/` (the **Render the soundtrack** card, or `music-export`) | WAV, FLAC, MIDI, SoundFont |
+| Movies | `browse/movies/` | MP4 |
 | Game text | `browse/text/` | UTF-8 |
-| Cutscene scripts | `browse/classes/` | Java class files (yes, really: [docs/JAVA.md](docs/JAVA.md)) |
-| Executables | `browse/code/` | the main program and overlays, with all their function names intact |
+| Cutscene scripts | `browse/classes/` | Java class files |
+| Executables | `browse/code/` | ELF and IRX |
+
+## Translating the game
+
+The kit is built to carry a fan translation end to end, and the
+pipeline has been proven in-game.
+
+* **Menus, text boxes and mails.** `text-export` writes all 914 text
+  objects as plain UTF-8 files, one per object, each marked with how
+  many bytes it may use. Edit them in anything. `text-import` checks
+  every file fits, re-encodes it, and writes a patched ISO only when all
+  of them pass.
+* **Cutscene dialogue.** Spoken lines in cutscenes live inside the Java
+  scripts. Same-length replacements work today and run in the game; the
+  opening tutorial has been played through in French. Lines that change
+  length need a class-file rewriter, which is on the list.
+* **Movie subtitles.** The cutscene movies have no subtitle track at all,
+  so the kit gives you a timing template, lets you write and time the
+  lines in any SRT editor, and burns them into the video with the
+  original audio untouched. [docs/SUBTITLES.md](docs/SUBTITLES.md).
+* **Guides.** A step-by-step French walkthrough in
+  [docs/FRENCH-TRANSLATION-GUIDE.md](docs/FRENCH-TRANSLATION-GUIDE.md),
+  and the groundwork for right-to-left scripts in
+  [docs/ARABIC-TRANSLATION-SPEC.md](docs/ARABIC-TRANSLATION-SPEC.md).
 
 ## Modding
 
@@ -94,12 +156,8 @@ same as the retail disc.
 * **Recolour KOS-MOS's hair** with one click (`pinkhair`). It is the
   worked example because the texture is stored in twelve places on the
   disc and the kit finds all of them.
-* **Translate the game.** `text-export` writes every menu and mail text
-  as plain UTF-8 files; edit them; `text-import` checks they fit and
-  writes a patched ISO. Cutscene dialogue lives in the Java scripts and
-  can be changed today as long as the new line is the same length.
-* **Subtitle the cutscenes.** The movies have no subtitle track, so the
-  kit lets you write one and burns it into the video.
+* **Translate it.** See the section above; the same patcher writes the
+  translated text and subtitled movies back.
 
 | | |
 |---|---|
@@ -143,6 +201,7 @@ please open an issue with the exact error.
 | [BLENDER.md](docs/BLENDER.md) | bring the models into Blender |
 | [MODDING.md](docs/MODDING.md) | change the game: patching, recolours, translation, verification |
 | [SUBTITLES.md](docs/SUBTITLES.md) | add subtitles to the cutscenes |
+| [FRENCH-TRANSLATION-GUIDE.md](docs/FRENCH-TRANSLATION-GUIDE.md), [ARABIC-TRANSLATION-SPEC.md](docs/ARABIC-TRANSLATION-SPEC.md) | translate the game, step by step |
 | [MUSIC.md](docs/MUSIC.md) | understand and render the soundtrack |
 | [JAVA.md](docs/JAVA.md) | read the cutscene scripts |
 | [FORMATS.md](docs/FORMATS.md) | see the byte-level details of every file format |
