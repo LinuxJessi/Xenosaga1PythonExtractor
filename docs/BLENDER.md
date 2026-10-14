@@ -70,9 +70,11 @@ the head.
 * **No skeleton pose yet.** The joints come through as named vertex
   groups; their positions and hierarchy live in the `.jnt` files, which
   are the next thing to decode.
-* **No eyelashes.** Every character has a lash mesh whose texture is a
-  tiny 4-bit sheet the texture decoder cannot read yet. The lashes are
-  in the file with correct UVs; their material is named
+* **No eyelashes.** Every character has a lash mesh, but its texture is
+  not in the character's own atlas: the rect it points at is only the
+  video-memory slot a shared 4-bit lash sheet is uploaded into at
+  runtime, and that sheet has not been found on the disc yet. The
+  lashes are in the file with correct UVs; their material is named
   `…_lash-4bpp-undecoded` so it is easy to hide.
 * **No animation.** Not located on the disc yet.
 * Two map meshes use vertex formats the parser skips, and blend shapes

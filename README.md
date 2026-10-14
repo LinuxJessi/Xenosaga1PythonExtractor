@@ -100,6 +100,13 @@ Everything on the disc, converted to something you can open.
   as WAV and FLAC, with the MIDI and SoundFont alongside so you can
   remix it. [docs/MUSIC.md](docs/MUSIC.md) tells the story.
 
+**Hear it.** Two short excerpts straight out of the kit, so you know
+what to expect before you run it: the opening of
+[Battle 1, rendered from the sequenced music](docs/media/battle1-excerpt.mp3)
+(15 s) and [a voice line from the streamed cutscene audio](docs/media/voice-line-excerpt.mp3)
+(8 s). Click to play in the browser. Everything else, the full tracks
+and all 103 voice streams, comes from your own disc.
+
 **Words and code**
 
 * All in-game text as UTF-8: menus, text boxes, the U.M.N. mails, item
