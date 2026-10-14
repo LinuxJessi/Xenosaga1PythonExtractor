@@ -32,7 +32,7 @@ def load(p: Path) -> bytes:
     return arx.decompress(r) if arx.is_arx(r) else r
 
 
-def find_table(ram: bytes, sk: lex.Skeleton) -> int | None:
+def find_table(ram: bytes, sk: lex.Skeleton):
     """Byte offset of the node-matrix table: 64-byte column-major 4x4
     matrices, one per block, so that table[b] is block b's world matrix."""
     rest = np.array([[w[r][3] for r in range(3)] for w in sk.world_matrices()])

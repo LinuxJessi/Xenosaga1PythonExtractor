@@ -60,6 +60,12 @@ the worked example: `docs/images/kosmos-armature.png`. Without a pose
 file the import still looks right and legs, torso and head pose
 correctly; only arm and hair pivots sit at the T-pose until captured.
 
+**Bone display.** Blender's importer gives every bone an icosphere
+shape, so a 121-bone character looks covered in spiky balls. Select the
+armature, Properties ▸ Armature ▸ Viewport Display ▸ Display As: Stick
+(and tick In Front), or in the importer options set Bone Shape to
+"Blender" before importing.
+
 **Scale.** The game works in metres, Y up, same as glTF. KOS-MOS stands
 1.73 m tall and lands upright on Blender's floor with no scaling.
 
