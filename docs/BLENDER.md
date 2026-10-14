@@ -39,26 +39,12 @@ shading tint. If a model looks too dark, unplug the Color Attribute node
 from Base Color in the material.
 
 **An armature** named after the character, built from the `.jnt`
-skeleton file: the real joint hierarchy with the game's rest pose,
-plus the face file's own small skeleton for eyes and mouth. Skin weights
-are the game's own, as vertex groups named `j<number>` (rotation joints)
-with the offset, translate and bone-end nodes in between. Torso, legs,
-head and face bones sit on the mesh. For arms and hair the file's rest
-pose is a T-pose with the hair raised, while the mesh is modelled arms
-and hair down. The pose that matches the mesh lives only in the running
-game, and the kit can capture it: with PCSX2 running the game (PINE
-enabled) and the character on screen, run
-
-```sh
-python docs/research/pine_pose.py out/dump chain0/char/pc/kosmos
-```
-
-which writes `kosmos.pose.json` next to the `.jnt`. The next `browse`
-run (or `lex.to_glb`) uses it as the bind pose, and every bone, hands
-and hair included, lands on the mesh. KOS-MOS's captured pose ships as
-the worked example: `docs/images/kosmos-armature.png`. Without a pose
-file the import still looks right and legs, torso and head pose
-correctly; only arm and hair pivots sit at the T-pose until captured.
+skeleton file: the real joint hierarchy in the game's pose, plus the
+face file's own small skeleton for eyes and mouth. Every bone sits on
+the mesh, arms and hair included; the skin weights are the game's own,
+as vertex groups named `j<number>` for the rotation joints, with the
+offset, translate and bone-end nodes in between. You can pose the
+character straight away.
 
 **Bone display.** Blender's importer gives every bone an icosphere
 shape, so a 121-bone character looks covered in spiky balls. Select the
@@ -89,8 +75,6 @@ the head.
 
 ## Known gaps
 
-* **Arm and hair bones need a captured pose** (see above); without one
-  they sit in the file's T-pose. Everything else lines up either way.
 * **No eyelashes.** Every character has a lash mesh, but its texture is
   not in the character's own atlas: the rect it points at is only the
   video-memory slot a shared 4-bit lash sheet is uploaded into at

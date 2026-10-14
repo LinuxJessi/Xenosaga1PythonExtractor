@@ -1574,9 +1574,7 @@ def build_browse(out_dir: Path, kinds: Iterable[str], rate: int = VOICE_RATE,
                     bump("models_with_skeleton")
                     # a bind pose captured from the running game
                     # (docs/research/pine_pose.py) sits next to the .jnt
-                    pose = jnt.with_suffix(".pose.json")
-                    if not pose.is_file():   # poses captured once and shipped with the kit
-                        pose = Path(__file__).resolve().parent / "poses" / (jnt.stem + ".pose.json")
+                    pose = jnt.with_suffix(".pose.json")   # optional: a pose captured from the game
                     if pose.is_file():
                         import json
                         skeleton.apply_pose(json.loads(pose.read_text())["blocks"])

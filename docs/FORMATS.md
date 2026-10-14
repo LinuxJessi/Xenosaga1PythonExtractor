@@ -390,28 +390,19 @@ World = parent_world * T(position) * R(rotation). Verified by the
 vertex centroids weighted to each joint: hips/knees/ankles/toes land at
 0.98/0.54/0.16/0.01 m on KOS-MOS, mirrored; face .jnt joints already
 land in body space (eyes within 2 cm of the eye meshes).
-CAVEAT: the file's rest pose is a T-pose with the hair raised; the
-mesh is modelled arms-down, hair-down. Torso, legs, head and face
-joints coincide with the mesh; arm and hair joints sit 0.3–1.2 m from
-their vertices. No Euler order, sign or T/R composition closes that gap
-(brute-forced), so the modelled pose is not stored as joint transforms
-in .jnt or .lex (the lex's 26 matrix pairs are identity). The glTF
-export binds with inverse(rest world), which leaves the mesh exactly as
-stored; posing an arm therefore pivots at the T-pose shoulder.
-The bind pose is NOT in the files, but the running game has it: the
-engine keeps a table of 4x4 world matrices, one 64-byte entry per .jnt
-block in block order (model space; entry 0 is the character's placement
-in the field; rows stored as 4-vectors with w = 1, translation in the
-4th row, i.e. row-vector convention), found in EE RAM by matching the
-rest-pose positions of the static joints (hips, spine) — KOS-MOS in
-save-state 7 at 0x7cb090. In the idle pose those matrices put every
-joint on its vertices (mean joint-to-centroid 0.09 m, hands and hair
-included). `docs/research/pine_pose.py` captures it over PINE into
-`<stem>.pose.json`; `Skeleton.apply_pose` derives node locals from it
-(local = parent_world^-1 * world, roots forced to identity, the post
-blocks after the name table dropped — their slots hold unrelated data)
-and `to_glb` binds with its inverse. Composition reproduces the captured
-table exactly (0 mismatches over 120 blocks).
+Rotation convention, the part that bit: the stored triple is (angle
+about Z, angle about Y, angle about X), R = Rz(a)·Ry(b)·Rx(c). Read as
+(x, y, z) it produces a convincing-looking T-pose with the hair raised
+while legs and spine still match, which cost an afternoon. Settled by
+reading the engine's own per-node matrix table out of the running game
+(EE RAM over PINE, `docs/research/pine_pose.py`; one 64-byte entry per
+block in block order, row-vector convention with w = 1 in each row's
+4th slot, entry 0 = field placement) and brute-forcing axis labelling ×
+composition order × sign against it: Z,Y,X is exact (0.0000 m over 120
+nodes), every other reading is off by 0.02–1.5 m. With it, joints sit
+on their weighted vertices on every model tried (mean 0.07–0.12 m, the
+half-bone offset you expect). No capture is needed; the tool stays as
+the verification method.
 ```
 
 ## FL00 event containers / Java (`evt.py`)

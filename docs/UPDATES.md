@@ -2,28 +2,27 @@
 
 Newest first: what changed, why, and what it means for you.
 
-## 2026-10-14 — skeletons: the `.jnt` files decoded
+## 2026-10-14 — skeletons: the `.jnt` files decoded, armatures in the game's pose
 
 Models now import into Blender with a real armature instead of a flat
 list of joints. The `.jnt` file is a tree of 64-byte nodes: a type
 (offset, rotation joint, translate, bone end, name), a parent index, a
-local position and a local rotation. The skin's weight groups are the
-rotation joints in order, which checks out on every model tried. The
-face file's own small skeleton comes along for eyes and mouth.
+local position and three rotation angles. The skin's weight groups are
+the rotation joints in order, which checks out on every model tried,
+and the face file's own small skeleton comes along for eyes and mouth.
 
-What lines up from the files alone: torso, legs, head and face.
-KOS-MOS's hips, knees, ankles and toes land at 0.98, 0.54, 0.16 and
-0.01 m, mirrored, and her eye joints are within two centimetres of the
-eye meshes. Arms and hair do not: the file's rest pose is a T-pose with
-the hair raised while the mesh is modelled arms-down, and no rotation
-convention closes that gap. The pose that matches the mesh turned out
-to live only in the running game, so there is now a capture tool
-(`docs/research/pine_pose.py`): with PCSX2 running and the character on
-screen it reads the engine's per-bone matrix table over PINE and writes
-a `.pose.json` next to the `.jnt`, which the export uses as the bind
-pose. With it, every KOS-MOS bone sits on the mesh, hands and hair
-included (`docs/images/kosmos-armature.png`). Byte layout, the RAM table
-and the evidence: [FORMATS.md](FORMATS.md) § JNT skeletons.
+Every bone lands on the mesh, hands and hair included, from the files
+alone. The one trap: the three angles are rotations about Z, Y and X in
+that order, not X, Y, Z. Read the usual way they give a convincing
+T-pose with the hair raised while legs and spine still line up, and
+for a while that looked like a missing bind pose. It was settled by
+running the game: PCSX2 with PINE enabled, a save state with KOS-MOS on
+screen, and a RAM dump that contains the engine's own per-bone matrix
+table. Brute-forcing the rotation reading against that table gave an
+exact match for Z, Y, X and nothing close for any other reading. The
+capture tool (`docs/research/pine_pose.py`) stays in the kit as the way
+that was verified; nobody needs to run it. Byte layout and the evidence:
+[FORMATS.md](FORMATS.md) § JNT skeletons.
 
 **Eyelashes, status.** Still missing, and the RAM session narrowed it
 further: every 4-bit texture upload chain in memory (152 of them, in a

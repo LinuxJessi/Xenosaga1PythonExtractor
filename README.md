@@ -16,8 +16,9 @@ The kit ships no game data. You need your own copy of the disc.
 * **Models open in Blender.** Every character, enemy, weapon, mech, prop
   and map on the disc comes out as a `.glb` with its texture inside.
   File ▸ Import ▸ glTF 2.0 and you have the mesh, its UVs, vertex
-  colours, skin weights and an armature built from the game's own
-  skeleton files. Faces are merged into their bodies.
+  colours, skin weights and a posable armature built from the game's
+  own skeleton files, every bone on the mesh. Faces are merged into
+  their bodies.
   How-to and what to expect: [docs/BLENDER.md](docs/BLENDER.md).
 * **Character textures look right.** Opening models in Blender showed
   four texture bugs that had been there since the first release, and
@@ -38,10 +39,9 @@ The kit ships no game data. You need your own copy of the disc.
   FLAC, with MIDI and SoundFont files alongside, at the right tempo.
   The story of how: [docs/MUSIC.md](docs/MUSIC.md).
 
-Still on the list: capturing the modelled pose for characters other
-than KOS-MOS (the skeleton files hold a T-pose; a small tool reads the
-real pose from the running game, see the Blender guide), the eyelash
-textures, and a few map meshes in formats the model parser skips. The full change log is in [docs/UPDATES.md](docs/UPDATES.md).
+Still on the list: animation (the motion packs are located but not
+decoded, so bones pose but do not play), the eyelash textures, and a
+few map meshes in formats the model parser skips. The full change log is in [docs/UPDATES.md](docs/UPDATES.md).
 
 ## Running it
 
