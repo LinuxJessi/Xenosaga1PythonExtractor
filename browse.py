@@ -213,20 +213,22 @@ def _cbp_to_xy(cbp: int, clen: int) -> tuple[int, int]:
     return (page % pages_per_row) * 64 + bx, (page // pages_per_row) * 32 + by
 
 
-def scan_ovl_cluts(code_dir: Path) -> dict[str, list[int]]:
-    """Map lowercase .xtx basename -> CBP palette-pointer candidates, read
-    from the OV*.OVL overlays' texture descriptors.
+def scan_ovl_descriptors(code_dir: Path
+                         ) -> dict[str, list[tuple[int, int, int, int, int]]]:
+    """Map lowercase .xtx basename -> texture descriptors (u, v, w, h, cbp)
+    read from the OV*.OVL overlays that reference the texture by path.
 
-    Each overlay that references a texture by path also holds 28-byte
-    descriptors {u32 u, v, w-1, h-1, 0, cbp, texslot} whose CBP is the
-    ground-truth palette location (see FORMATS.md). Descriptor->texture
-    binding needs runtime tracing, so every texture referenced by an
-    overlay gets that overlay's whole (deduped) CBP set as candidates —
-    the per-file plausibility check and scoring pick the right one.
+    Each overlay holds 28-byte descriptors {u32 u, v, w-1, h-1, 0, cbp,
+    texslot}: a rect in texture pixels plus the GS block address of the
+    CLUT that colours it (see FORMATS.md). Descriptor->texture binding is
+    runtime state, so every texture an overlay references gets the
+    overlay's whole descriptor list; ``decode_xtx`` keeps the descriptor
+    groups whose CBP lands on a CLUT tile parked beside the sheet's own
+    palette and which render their rects more coherently than it does.
     """
     import re
 
-    index: dict[str, list[int]] = {}
+    index: dict[str, list[tuple[int, int, int, int, int]]] = {}
     if not code_dir.is_dir():
         return index
     for ovl in sorted(code_dir.glob("OV*.OVL")):
@@ -236,18 +238,31 @@ def scan_ovl_cluts(code_dir: Path) -> dict[str, list[int]]:
                                       re.IGNORECASE)}
         if not names:
             continue
-        cbps = []
+        descs: list[tuple[int, int, int, int, int]] = []
         for off in range(0, len(data) - 28, 4):
             u, v, w, h, zero, cbp, slot = struct.unpack_from("<7I", data, off)
             if (zero == 0 and 0 < cbp < 0x800 and u < 1024 and v < 1024
-                    and 0 < w + 1 <= 1024 and 0 < h + 1 <= 1024 and slot < 32
-                    and cbp not in cbps):
-                cbps.append(cbp)
-        if not cbps:
+                    and 0 < w + 1 <= 1024 and 0 < h + 1 <= 1024 and slot < 32):
+                d = (u, v, w + 1, h + 1, cbp)
+                if d not in descs:
+                    descs.append(d)
+        if not descs:
             continue
         for name in names:
             merged = index.setdefault(name, [])
-            merged += [c for c in cbps if c not in merged]
+            merged += [d for d in descs if d not in merged]
+    return index
+
+
+def scan_ovl_cluts(code_dir: Path) -> dict[str, list[int]]:
+    """Map lowercase .xtx basename -> CBP palette-pointer candidates: the
+    distinct CBPs of ``scan_ovl_descriptors``, in first-seen order."""
+    index: dict[str, list[int]] = {}
+    for name, descs in scan_ovl_descriptors(code_dir).items():
+        cbps = index.setdefault(name, [])
+        for d in descs:
+            if d[4] not in cbps:
+                cbps.append(d[4])
     return index
 
 
@@ -393,6 +408,7 @@ def lex_materials(lex: bytes) -> list[tuple[int, int, int, int, int, int]]:
 
 def decode_xtx(data: bytes, lex: bytes | list[bytes] = b"",
                cbp_candidates: Optional[list[int]] = None,
+               ovl_rects: Optional[list[tuple[int, int, int, int, int]]] = None,
                ) -> Optional[tuple[int, int, bytes, str]]:
     """(width, height, RGBA, palette_source) of the composed texture, or None.
 
@@ -404,6 +420,9 @@ def decode_xtx(data: bytes, lex: bytes | list[bytes] = b"",
     ``cbp_candidates`` — CLUT base pointers from the consuming overlay's
     texture descriptors (``scan_ovl_cluts``); when one of them lands on a
     plausible palette tile it is ground truth and wins over guessing.
+    ``ovl_rects`` — the full descriptors (``scan_ovl_descriptors``): for a
+    model-less UI sheet they are its materials, each rect painted with
+    its own parked palette (card pips vs court cards vs card back).
     palette_source is one of "embedded", "lex", "ovl", "scan", "gray".
     """
     if data[:4] != b"XTX\x00" or len(data) < 0x24:
@@ -522,10 +541,13 @@ def decode_xtx(data: bytes, lex: bytes | list[bytes] = b"",
     # penalises transparency — right for character atlases, where a wrong
     # palette hides garbage behind alpha 0, wrong here: on the casino slot
     # frame and window sheet it preferred washed-out grey palettes parked
-    # for other sub-images. When the first conventional-spot palette is
-    # a frame-like render (50-95 % opaque) and, penalty aside, about as
-    # coherent as the ranked winner, keep it — the v1.0.0 first-hit
-    # behaviour that was right on those sheets.
+    # for other sub-images. When the first conventional-spot palette
+    # renders at least half opaque and, penalty aside, about as coherent
+    # as the ranked winner, keep it — the v1.0.0 first-hit behaviour that
+    # was right on those sheets. (v1.1.0 required < 95 % opaque, which
+    # left the fully opaque casino gallery sketches and the slot sheet
+    # with a monotone palette the coherence score prefers — the ratio is
+    # biased toward washed-out palettes, see _region_noise.)
     if not lexes and base_pal is not None and source in ("ovl", "scan"):
         for cand, xy in _scan_for_clut(canvas, clen):
             if not _plausible_clut(cand):
@@ -536,8 +558,8 @@ def decode_xtx(data: bytes, lex: bytes | list[bytes] = b"",
                 # a ranked winner that renders the sheet nearly flat (the
                 # window sheet's pick was near-black) is no evidence at all
                 flat_b = _far_contrast(idx, W, base_pal, 0, W, 0, H) < 12.0
-                if 0.5 <= opq_f < 0.95 and (ratio_f <= ratio_b * 1.25
-                                             or flat_b):
+                if 0.5 <= opq_f and (ratio_f <= ratio_b * 1.25
+                                     or flat_b):
                     base_pal, pal_xy, source = cand, xy, "scan"
             break
     base_lut = ([bytes(p) for p in base_pal] if base_pal
@@ -583,6 +605,81 @@ def decode_xtx(data: bytes, lex: bytes | list[bytes] = b"",
             continue
         paint(pal, u0, u1, v0, v1)
         painted.append((u0, u1, v0, v1))
+
+    # UI sheets (no model) consumed by an overlay: the overlay's texture
+    # descriptors are the sheet's materials — a rect in texture pixels plus
+    # the CBP of the CLUT that colours it (the card sheets draw pips, court
+    # cards and the card back from three parked palettes; the slot sheet
+    # keys nine UI elements to a column of nine). Every texture the
+    # overlay references gets the same descriptor list, so a descriptor is
+    # trusted only as part of a GROUP (all rects sharing one CBP) that
+    # (1) lands on a CLUT tile parked beside the sheet's own palette —
+    # chained within 32 px of the base tile, the way artists park a
+    # sheet's palette strip — and (2) renders its rects clearly smoother
+    # than the base palette does (median adjacent/far ratio <= 0.9 of the
+    # base's) without hiding them (median opacity >= half the base's;
+    # text strips legitimately turn their background transparent).
+    # Measured on OV11: true groups score 0.31-0.85, the same descriptors
+    # applied to the wrong sheet 0.99-12 (poker pay table, exchange, BG).
+    used_tiles: set[tuple[int, int]] = set()  # accepted groups' CLUT tiles
+    if (not lexes and ovl_rects and base_pal is not None
+            and pal_xy is not None):
+        groups: dict[tuple[int, int], list[tuple[int, int, int, int]]] = {}
+        for u, v, w, h, cbp in ovl_rects:
+            u0, v0, u1, v1 = u, v, min(W, u + w), min(H, v + h)
+            if u0 >= W or v0 >= H or u1 - u0 < 8 or v1 - v0 < 8:
+                continue
+            tile = _cbp_to_xy(cbp, clen)
+            if tile == pal_xy or not _clut_tile_like(canvas, clen, *tile):
+                continue
+            groups.setdefault(tile, []).append((u0, u1, v0, v1))
+        parked = {pal_xy}
+        grown = True
+        while grown:
+            grown = False
+            for t in groups:
+                if t not in parked and any(abs(t[0] - q[0]) <= 32
+                                           and abs(t[1] - q[1]) <= 32
+                                           for q in parked):
+                    parked.add(t)
+                    grown = True
+        accepted: list[tuple[int, int, int, int, int, list[bytes]]] = []
+        for tile, rects in groups.items():
+            if tile not in parked:
+                continue
+            pal = _clut_at(canvas, clen, *tile)
+            if not _plausible_clut(pal) or pal == base_pal:
+                continue
+            ratios: list[float] = []
+            opqs: list[float] = []
+            measured = []
+            for u0, u1, v0, v1 in rects:
+                mn, mo = _region_noise(idx, W, pal, u0, u1, v0, v1)
+                bn, bo = _region_noise(idx, W, base_pal, u0, u1, v0, v1)
+                measured.append((u0, u1, v0, v1, mn, mo))
+                if mn != float("inf") and bn != float("inf") and bn > 0:
+                    ratios.append(mn / bn)
+                if bo > 0:
+                    opqs.append(mo / bo)
+            if not ratios:
+                continue
+            ratios.sort()
+            opqs.sort()
+            if (ratios[len(ratios) // 2] > 0.9
+                    or (opqs and opqs[len(opqs) // 2] < 0.5)):
+                continue
+            for u0, u1, v0, v1, mn, mo in measured:
+                # a rect the palette renders as one flat opaque colour is
+                # no evidence either way; leave it to the base palette
+                if mn == float("inf") and mo > 0.05:
+                    continue
+                accepted.append(((u1 - u0) * (v1 - v0), u0, u1, v0, v1, pal))
+            used_tiles.add(tile)
+            source = "ovl"
+        accepted.sort(key=lambda a: -a[0])  # big rects first: specific win
+        for _area, u0, u1, v0, v1, pal in accepted:
+            paint(pal, u0, u1, v0, v1)
+            painted.append((u0, u1, v0, v1))
 
     # regions no parsed material covers (their materials hide in the VIF
     # vertex streams): per 64px block, if some known palette renders it
@@ -716,7 +813,7 @@ def decode_xtx(data: bytes, lex: bytes | list[bytes] = b"",
         if len(cluster) * 32 * 32 > W * H * 0.06:
             cluster = set()  # parked CLUTs are a sliver of a big canvas;
             # on a small texture the "tile" is likelier art — leave it
-        for tx, ty in cluster:
+        for tx, ty in cluster | used_tiles:
             px0, py0 = tx * 2, ty * 2
             for y in range(max(0, py0), min(H, py0 + 32)):
                 drow = y * W * 4
@@ -1166,7 +1263,13 @@ def build_browse(out_dir: Path, kinds: Iterable[str], rate: int = VOICE_RATE,
 
         tdir = browse / "textures_png"
         srcs = list(_dump_files(dump, (".xtx",)))
-        cbp_index = scan_ovl_cluts(browse / "code")  # {} without extract --code
+        rect_index = scan_ovl_descriptors(browse / "code")  # {} w/o --code
+        cbp_index: dict[str, list[int]] = {}
+        for name, descs in rect_index.items():
+            cbps = cbp_index.setdefault(name, [])
+            for d in descs:
+                if d[4] not in cbps:
+                    cbps.append(d[4])
         seen: dict[str, str] = {}  # sha1 of XTX bytes -> written PNG (dedup)
         log(f"textures: decoding {len(srcs)} .xtx -> PNG "
             f"({len(cbp_index)} with overlay palette hints) ...")
@@ -1194,7 +1297,8 @@ def build_browse(out_dir: Path, kinds: Iterable[str], rate: int = VOICE_RATE,
             for extra in sorted(companions.get(src, [])):
                 lex.append(_load(extra, bump))
             cbps = cbp_index.get(src.name.lower())
-            decoded = decode_xtx(data, lex, cbps) if data else None
+            rects = rect_index.get(src.name.lower())
+            decoded = decode_xtx(data, lex, cbps, rects) if data else None
             if decoded is None:
                 bump("textures_undecodable")
                 continue

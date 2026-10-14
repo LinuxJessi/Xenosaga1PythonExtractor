@@ -124,14 +124,28 @@ two middle 8-entry runs of each 32). PS2 alpha is 7-bit: scale
 
 1. Dedicated 16x16 sub-image in the same file.
 2. Paired `.lex` model materials (below).
-3. Overlay descriptors (`scan_ovl_cluts`): the consuming overlay addresses
-   the CLUT by GS block pointer (CBP) in 28-byte texture descriptors
-   `{u32 u, v, w-1, h-1, 0, CBP, texslot}` — OV11.OVL (casino) references
-   `data\tanaka\*.xtx` by path string. Mapping: `page = cbp/32`, pages laid
-   canvas_width/64 per row (64x32 px), block within page via the PSMCT32
-   block table (8x8 px blocks). Descriptor->texture binding would need
-   runtime tracing, so each referenced texture gets the overlay's whole CBP
-   set as candidates and the least-noisy render wins (below).
+3. Overlay descriptors (`scan_ovl_descriptors` / `scan_ovl_cluts`): the
+   consuming overlay addresses the CLUT by GS block pointer (CBP) in
+   28-byte texture descriptors `{u32 u, v, w-1, h-1, 0, CBP, texslot}` —
+   OV11.OVL (casino) references `data\tanaka\*.xtx` by path string.
+   Mapping: `page = cbp/32`, pages laid canvas_width/64 per row (64x32
+   px), block within page via the PSMCT32 block table (8x8 px blocks).
+   Descriptor->texture binding would need runtime tracing, so each
+   referenced texture gets the overlay's whole descriptor list. The
+   distinct CBPs are base-palette candidates (least-noisy render wins,
+   below) and the descriptors are the sheet's *materials*: a UI sheet is
+   multi-palette by design (OV11's card grid draws the 81x121 pip cards
+   from CBP 1016, the J/Q/K/Joker from 1020 and the card back from
+   1004; the slot sheet keys nine elements to a column of nine CLUTs at
+   canvas x=112). `decode_xtx` paints a descriptor *group* (every rect
+   sharing one CBP) when its tile is CLUT-like and parked within 32 px
+   (chained) of the sheet's base tile, and the group's rects render with
+   a median adjacent/far ratio <= 0.9x the base palette's at >= half its
+   opacity (text strips legitimately go transparent). Measured on OV11:
+   true groups score 0.31-0.85; the same descriptors applied to a sheet
+   they do not belong to (poker pay table, exchange, BG — which park
+   CLUT-like tiles at the same corner) score 0.99-12. Big rects paint
+   first so specific ones win; accepted tiles are blanked from output.
 4. Corner-scan: menu/backdrop textures park CLUT tiles in unused canvas
    corners. Scan 16x16 tiles (all raw alpha <= 0x80, >= 64 distinct
    colours), conventional spots first: (0,224), (240,240), (224,240),

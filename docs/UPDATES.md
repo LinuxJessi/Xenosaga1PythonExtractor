@@ -3,6 +3,58 @@
 Newest first. Each entry lists what changed, why, and what you have to do
 to benefit from it.
 
+## 2026-10-14 — casino sheets: overlay descriptors as materials
+
+The casino UI sheets were the last textures the decoder got visibly
+wrong, and both residuals turned out to be the same fact: a UI sheet is
+**multi-palette by design**, and OV11.OVL's texture descriptors say
+which parked CLUT colours which rect — the overlay equivalent of a
+`.lex` model's materials.
+
+* **Card sheets** (`tanaka/clover`, `dia`, `heart`, `spade`): pip cards,
+  court cards and the card back each have their own palette parked in
+  the bottom-right corner. One palette can't render all three — v1.1.0
+  showed the court cards in a pink cast with correct pips, or correct
+  court cards with sepia pips. Now every card renders right (black and
+  red pips, KOS-MOS/Shion/Jr./chaos/Ziggy court art, the red ornate
+  back).
+* **Slot sheet** (`tanaka/base`): keys nine UI elements (reel symbols,
+  "Gets down" panels, digits, text strips) to a column of nine CLUTs.
+  v1.1.0 rendered it through one dark monotone palette with half the
+  sheet blanked; now each element draws from its own.
+* **Casino gallery sketches** (`tanaka/02_Y2`, `03_W2`, `08_W3`,
+  `12_W2`, `12_W3`, `15_W2`, `19_W1`, `19_W3`, `19_W4`): the pencil
+  concept art the dataviewer shows rendered as near-transparent line
+  noise because the conventional-spot rule from v1.1.0 only applied to
+  sheets under 95 % opaque. Lifting the cap gives clean sketches on
+  white.
+
+How it works (`browse.py`): `scan_ovl_descriptors` keeps the full
+`(u, v, w, h, cbp)` descriptors, not just the CBP set. For a sheet with
+no `.lex`, `decode_xtx` groups the descriptors by CBP and paints a
+group only when its tile is a CLUT parked beside the sheet's own
+palette (chained within 32 px) **and** its rects render clearly more
+coherently than under the base palette (median ratio <= 0.9, opacity
+kept). The second test is what stops the card descriptors — which every
+OV11 texture receives — from repainting the poker pay table or the
+exchange screen, whose corners park CLUT-like tiles at the same spots
+(true groups score 0.31–0.85, foreign ones 0.99–12). `docs/FORMATS.md`
+§ Palettes has the numbers.
+
+Still open on the slot sheet: the two reel-symbol strips (texture
+x < 224, y < 250) are covered by no descriptor — the reels are drawn by
+another code path — so they render under the sheet's base palette with
+a red/blue fringe; the column parks three CLUTs no descriptor claims
+(canvas (112,0), (112,16), (112,48)) and one of those is probably the
+reel palette (per-machine colour variants?).
+
+Verified by rendering all 245 lex-less `.xtx` with the previous and new
+code (`docs/research/lexless_render.py`, 35 s instead of a 40-minute
+full browse): exactly 15 files change — the 14 above, all better, plus
+`texture/fm8011`, which is dither noise under every candidate palette
+before and after (its real format is still unknown). Model-bound
+textures are untouched (the pass is gated on "no `.lex`").
+
 ## 2026-09-24 — scene-archive textures: the "undecodable variant" was ARX
 
 The ~500 embedded XTX hits the sweep reported as *undecodable* (all in
