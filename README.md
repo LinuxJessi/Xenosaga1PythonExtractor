@@ -105,7 +105,7 @@ what to expect before you run it: the opening of
 [Battle 1, rendered from the sequenced music](docs/media/battle1-excerpt.mp3)
 (15 s), [a voice line from the streamed cutscene audio](docs/media/voice-line-excerpt.mp3)
 (8 s), and [a string of battle shouts](docs/media/battle-shouts-excerpt.mp3)
-from KOS-MOS, Shion, Jr., MOMO, chaos and Ziggy's attack banks
+from Jr., KOS-MOS, MOMO and Ziggy's attack and boost banks
 (16 s). Click to play in the browser. Everything else, the full tracks
 and all 103 voice streams, comes from your own disc.
 
