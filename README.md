@@ -11,15 +11,24 @@ The kit ships no game data. You need your own copy of the disc.
 
 ![KOS-MOS, Cherenkov and Albedo imported into Blender from the kit's .glb files](docs/images/blender-models.png)
 
+![Face close-ups of KOS-MOS, Shion, Jr., MOMO, chaos, Ziggy, Albedo and Cherenkov rendered by Blender from the kit's files, eyelashes included](docs/images/faces.png)
+
+![KOS-MOS as exported, then posed in Blender through the armature the kit builds from the game's skeleton files](docs/images/kosmos-posed.png)
+
 ## What's new (October 2026)
 
-* **Models open in Blender.** Every character, enemy, weapon, mech, prop
-  and map on the disc comes out as a `.glb` with its texture inside.
-  File ▸ Import ▸ glTF 2.0 and you have the mesh, its UVs, vertex
-  colours, skin weights and a posable armature built from the game's
-  own skeleton files, every bone on the mesh. Faces are merged into
-  their bodies.
+* **Models open in Blender, rigged.** Every character, enemy, weapon,
+  mech, prop and map on the disc comes out as a `.glb` with its texture
+  inside. File ▸ Import ▸ glTF 2.0 and you have the mesh, its UVs,
+  vertex colours, skin weights and a posable armature built from the
+  game's own skeleton files, every bone on the mesh: select it, Pose
+  Mode, grab a bone and rotate. Faces are merged into their bodies.
   How-to and what to expect: [docs/BLENDER.md](docs/BLENDER.md).
+* **Faces are complete.** Eyes, mouths and eyelashes on every character,
+  the lashes being the last piece: they are a small true-colour alpha
+  strip the lash polygons stretch into strokes, and the decoder had been
+  reading it through a palette. The gallery above is rendered by Blender
+  straight from the kit's output.
 * **Character textures look right, eyelashes included.** Opening models in Blender showed
   four texture bugs that had been there since the first release, and
   all are fixed: 42 character atlases that came out as beige noise
