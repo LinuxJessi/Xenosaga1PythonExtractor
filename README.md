@@ -38,11 +38,10 @@ The kit ships no game data. You need your own copy of the disc.
   FLAC, with MIDI and SoundFont files alongside, at the right tempo.
   The story of how: [docs/MUSIC.md](docs/MUSIC.md).
 
-Still on the list: the arm and hair bones sit in the skeleton's T-pose
-rather than where the mesh hangs (legs, torso, head and face line up),
-the eyelash textures (a shared 4-bit sheet the game uploads from a file
-not yet identified), and a few map meshes in formats the model parser
-skips. The full change log is in [docs/UPDATES.md](docs/UPDATES.md).
+Still on the list: capturing the modelled pose for characters other
+than KOS-MOS (the skeleton files hold a T-pose; a small tool reads the
+real pose from the running game, see the Blender guide), the eyelash
+textures, and a few map meshes in formats the model parser skips. The full change log is in [docs/UPDATES.md](docs/UPDATES.md).
 
 ## Running it
 

@@ -1572,7 +1572,14 @@ def build_browse(out_dir: Path, kinds: Iterable[str], rate: int = VOICE_RATE,
                 try:
                     skeleton = lexmod.parse_jnt(_load(jnt, bump))
                     bump("models_with_skeleton")
-                except lexmod.LexError:
+                    # a bind pose captured from the running game
+                    # (docs/research/pine_pose.py) sits next to the .jnt
+                    pose = jnt.with_suffix(".pose.json")
+                    if pose.is_file():
+                        import json
+                        skeleton.apply_pose(json.loads(pose.read_text())["blocks"])
+                        bump("models_with_captured_pose")
+                except (lexmod.LexError, ValueError, KeyError):
                     bump("models_bad_jnt")
             glb = lexmod.to_glb(model, tex[2] if tex else None,
                                 (tex[0], tex[1]) if tex else (1024, 256),
@@ -1591,7 +1598,8 @@ def build_browse(out_dir: Path, kinds: Iterable[str], rate: int = VOICE_RATE,
             f"({stats.get('models_textured', 0)} textured, "
             f"{tri_total:,} triangles; {stats.get('models_companions_merged', 0)} "
             f"companions merged; {stats.get('models_with_skeleton', 0)} with a "
-            f"posed skeleton; {stats.get('models_unparsed', 0)} unparsed, "
+            f"skeleton ({stats.get('models_with_captured_pose', 0)} with a captured "
+            f"bind pose); {stats.get('models_unparsed', 0)} unparsed, "
             f"{stats.get('models_with_warnings', 0)} with warnings)")
 
     if "audio" in kinds:

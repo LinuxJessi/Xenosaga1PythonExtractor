@@ -398,9 +398,20 @@ their vertices. No Euler order, sign or T/R composition closes that gap
 in .jnt or .lex (the lex's 26 matrix pairs are identity). The glTF
 export binds with inverse(rest world), which leaves the mesh exactly as
 stored; posing an arm therefore pivots at the T-pose shoulder.
-Candidates for the bind data: the type-1 "post" blocks the 0x20 table
-points at (big rotations, parented into the arm/hair chains), the
-+0/+8 floats, or an animation file not located yet.
+The bind pose is NOT in the files, but the running game has it: the
+engine keeps a table of 4x4 world matrices, one 64-byte entry per .jnt
+block in block order (model space; entry 0 is the character's placement
+in the field; rows stored as 4-vectors with w = 1, translation in the
+4th row, i.e. row-vector convention), found in EE RAM by matching the
+rest-pose positions of the static joints (hips, spine) — KOS-MOS in
+save-state 7 at 0x7cb090. In the idle pose those matrices put every
+joint on its vertices (mean joint-to-centroid 0.09 m, hands and hair
+included). `docs/research/pine_pose.py` captures it over PINE into
+`<stem>.pose.json`; `Skeleton.apply_pose` derives node locals from it
+(local = parent_world^-1 * world, roots forced to identity, the post
+blocks after the name table dropped — their slots hold unrelated data)
+and `to_glb` binds with its inverse. Composition reproduces the captured
+table exactly (0 mismatches over 120 blocks).
 ```
 
 ## FL00 event containers / Java (`evt.py`)

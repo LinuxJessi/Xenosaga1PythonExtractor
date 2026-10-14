@@ -116,15 +116,50 @@ class Skeleton:
     positions: list[tuple[float, float, float]]
     rotations: list[tuple[float, float, float]]
     names: list[str]            # the type-6 name records, in order
+    bind_worlds: dict = field(default_factory=dict)  # block -> 4x4 world (row-major) captured from the running game
 
     @property
     def joint_blocks(self) -> list[int]:
         return [i for i, t in enumerate(self.types) if t == 2]
 
     def local_matrix(self, i: int) -> list[list[float]]:
+        """Local transform of block i. With a captured bind pose, locals are
+        derived from the captured world matrices (local = parent^-1 * world)
+        so the exported nodes reproduce the pose the mesh was modelled in."""
+        if self.bind_worlds:
+            w = self.bind_worlds.get(i)
+            if w is not None:
+                p = self.parents[i]
+                pw = self.bind_worlds.get(p) if p is not None else None
+                return _matmul(_invert_rigid(pw), w) if pw is not None else w
         return _trs(self.positions[i], self.rotations[i])
 
+    def apply_pose(self, pose: dict) -> None:
+        """Install a captured pose: {block index: 16 floats row-major}.
+        Root blocks hold the character's placement in the field (the
+        children are model-space), so roots are forced to identity."""
+        self.bind_worlds = {int(k): [list(v[r * 4:(r + 1) * 4]) for r in range(4)]
+                            for k, v in pose.items()}
+        for m in self.bind_worlds.values():   # the engine keeps a 1 in each row's 4th slot
+            m[3] = [0.0, 0.0, 0.0, 1.0]
+        # the type-1 records after the name table (the "post" blocks the
+        # 0x20 table points at) are not evaluated nodes; their slots in the
+        # engine table hold unrelated data, so keep their rest transforms
+        names = [i for i, t in enumerate(self.types) if t == 6]
+        if names:
+            for i in range(names[-1] + 1, len(self.types)):
+                self.bind_worlds.pop(i, None)
+        for i, p in enumerate(self.parents):
+            if p is None and i in self.bind_worlds:
+                self.bind_worlds[i] = [row[:] for row in _IDENT]
+
     def world_matrices(self) -> list[list[list[float]]]:
+        if self.bind_worlds:
+            rest = self._rest_worlds()
+            return [self.bind_worlds.get(i, rest[i]) for i in range(len(self.types))]
+        return self._rest_worlds()
+
+    def _rest_worlds(self) -> list[list[list[float]]]:
         out: list = [None] * len(self.types)
 
         def get(i: int, depth: int = 0):
@@ -132,7 +167,7 @@ class Skeleton:
                 return out[i]
             p = self.parents[i]
             parent = _IDENT if (p is None or depth > 512) else get(p, depth + 1)
-            out[i] = _matmul(parent, self.local_matrix(i))
+            out[i] = _matmul(parent, _trs(self.positions[i], self.rotations[i]))
             return out[i]
 
         for i in range(len(self.types)):
@@ -671,7 +706,7 @@ def to_glb(model: ParsedLex, png: Optional[bytes], tex_size: tuple[int, int],
             label = (f"j{block_to_id[i]}" if i in block_to_id
                      else f"{kind.get(t, 'blk')}{i}")
             nodes.append({"name": label,
-                          "translation": [float(x) for x in skeleton.positions[i]],
+                          "translation": [float(m[0][3]), float(m[1][3]), float(m[2][3])],
                           "rotation": [float(x) for x in q]})
         roots = []
         for i, p in enumerate(skeleton.parents):
@@ -694,8 +729,9 @@ def to_glb(model: ParsedLex, png: Optional[bytes], tex_size: tuple[int, int],
                 q = _quat_from_matrix(csk.local_matrix(i))
                 label = (f"{prefix}j{cblock_to_id[i] % 100000}" if i in cblock_to_id
                          else f"{prefix}{kind.get(t, 'blk')}{i}")
+                cm = csk.local_matrix(i)
                 nodes.append({"name": label,
-                              "translation": [float(x) for x in csk.positions[i]],
+                              "translation": [float(cm[0][3]), float(cm[1][3]), float(cm[2][3])],
                               "rotation": [float(x) for x in q]})
             for i, pp in enumerate(csk.parents):
                 if pp is None:
