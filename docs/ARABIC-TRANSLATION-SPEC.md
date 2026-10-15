@@ -1,5 +1,14 @@
 # Xenosaga Episode I — Arabic translation: implementation spec
 
+> **Status (2026-10-14):** WP-1 (font format), WP-3 (class rewriter +
+> FL00 rebuilder) and the build-time transform of WP-4 are implemented:
+> `font.py`, `evttext.py`, `glyphs.py`, `langpack.py`. The current
+> walkthrough is [SCRIPTS.md](SCRIPTS.md); FORMATS.md § Fonts supersedes
+> §3.1 below (the glyph region is a GS PSMT4 texture reached through a
+> PSMCT32 upload, the metrics table holds 256 pairs from 0x78040, and
+> proportional text draws from a dedicated 256-cell block). WP-2's
+> screenshot — the cold open in Arabic — is the next thing to take.
+
 A self-contained handoff document. Written for an implementing agent (human
 or model) with no prior context on this repo. Everything in §1–§3 is
 **verified against the discs and binaries in this repo** (commands included);

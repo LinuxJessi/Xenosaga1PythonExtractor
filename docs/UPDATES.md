@@ -2,6 +2,106 @@
 
 Newest first: what changed, why, and what it means for you.
 
+## 2026-10-15 — v1.2.0: the script pipeline, tested on the console
+
+Everything in the October notes below ships as **v1.2.0**: models and
+armatures in Blender, the texture fixes, dialogue of any length, the
+third chain, the fonts and the new-script pipeline. This entry records
+what changed in the script pipeline after the first in-game run.
+
+**Seen running, not just previewed.** A LANGTEST disc built from the
+pink-hair example carries an Arabic dialogue line in the Encephalon
+cold open and an Amharic U.M.N. mail. PCSX2 draws both from the rebuilt
+`font0.tex`: the Arabic joined and right-to-left in the dialogue box,
+the Amharic body wrapped at the mail viewer's 400 px, proportional,
+with its Latin run and Ethiopic punctuation in place. The pictures are
+`docs/images/ingame-*.png`; the full command sequence is
+[SCRIPTS.md](SCRIPTS.md) § Worked example. The earlier `preview-*.png`
+mock-ups stay in the guide labelled as such.
+
+**Two scripts in one font.** `lang scan --extend glyphset.json` adds a
+second script (another TrueType font, another HarfBuzz tag) to the
+slots an earlier scan allocated, so Arabic and Ethiopic share one pair
+of fonts on the LANGTEST disc: 81 proportional slots used, 80 free.
+
+**Encoder fixes from the first real texts.**
+
+* A token that mixes scripts (an Amharic word glued to a Latin model
+  name, a bracket on an Arabic word) is split into runs by class and
+  each run encoded by its own rule; before, the whole token went to the
+  target script and lost its Latin half.
+* Raw C0 controls and `⟦XX⟧` escapes pass through untouched, and the
+  leading control sequence of a line is hoisted ahead of any
+  right-to-left reordering so mail bodies keep their mode byte.
+* The disc's own Japanese-range symbols (■ bullets, box drawing,
+  fullwidth forms) are left as they are instead of being re-shaped.
+* Leading and trailing spaces survive; lines wrap only at spaces, never
+  inside a word; a paragraph with no right-to-left run stays
+  left-to-right.
+
+**Still to verify.** Relocation past the image end (`--grow` onto new
+sectors) has been read back through the TOC on a scratch copy but not
+booted; both LANGTEST objects fit their slots. The mail list's subject
+and sender in a new script have not been seen either: a loaded save
+keeps the inbox list in RAM and only re-reads the body.
+
+**Driving PCSX2 from a script, for anyone repeating this.** Pad presses
+posted to the emulator by process id need a hold of about 300 ms;
+shorter taps are dropped at the title screen even though hotkeys land.
+The field menu will not open while the character stands on a ladder.
+
+## 2026-10-14 — translation without length limits, and fonts for new scripts
+
+The three walls a translation project hit are gone, and credit for the
+first look over each of them goes to poketony's
+[XS1KOR](https://github.com/poketony/XS1KOR), the Korean localisation of
+the Japanese disc, whose tools showed the shape of the answer; the
+implementations here are the kit's own, against the USA disc.
+
+**Dialogue of any length.** `evt-export` / `evt-import` (`evttext.py`)
+write every string literal in every scene and cutscene script as a text
+line and rebuild the Java classes and their FL00 container around the
+translations. An identity rebuild of all 567 containers is byte-exact.
+Mails (`.uml`) may grow too: the attached images move and their pointers
+follow. And when an object no longer fits its sector allocation,
+`--grow` relocates it to the end of the image and repoints its TOC entry
+— the engine reads by raw sector, so the place does not matter. Tested
+on a scratch copy of the disc: relocated, read back through the TOC,
+neighbours untouched, relocated again, shrunk back in place.
+
+**The third chain.** The disc's second layer carries its own ISO9660
+volume with `XENOSAGA.20`–`.24`: 266 objects the kit had been reading
+only as raw movie sectors, including 89 cutscene scripts and 44 voice
+streams. `list`, `extract`, `classes`, text and dialogue export all see
+chain 2 now; the raw layer-1 carve is skipped when the chain is there.
+
+**Fonts, exactly.** `font.py` decodes `font0.tex`/`font1.tex` to four
+sheets of 20x24 cells and back byte-for-byte, and knows how the
+executable addresses them: JIS order with two folds, a 256-cell
+proportional block for Latin text with a permuted metrics table, and
+`right - left + 3` pixels per glyph. The metrics match the inked columns
+of every ASCII glyph, which is how the block was confirmed. The game's
+text turns out to be EUC-JP, not Shift-JIS; `textpack` now decodes it as
+such (byte-identical for ASCII, correct symbols for the mails' bullets).
+
+**New scripts.** `lang scan` shapes a translated tree with HarfBuzz,
+gives each glyph the translation uses a proportional slot (161 free, or
+213 if the translation needs no Latin letters) or a kanji cell, and
+draws it from a TrueType font into both faces. `lang encode` shapes,
+measures, wraps, orders right-to-left lines with embedded Latin runs
+kept forward and brackets mirrored, and writes the codes. Previews of
+Arabic, Hebrew and Devanagari lines render correctly from the rebuilt
+cells, and the screen agrees: on PCSX2 the Encephalon cold open reads
+"درس افتراضي" joined and right-to-left, and a U.M.N. mail body in
+Amharic wraps and mixes with Latin, both drawn by the game from the
+rebuilt fonts (SCRIPTS.md § Worked example has the pictures and the
+disc recipe).
+
+New CLI: `evt-export`, `evt-import [--grow]`, `text-import --grow`,
+`font-extract`, `font-rebuild`, `lang scan|encode|preview`; GUI cards for
+the dialogue and script steps. Optional packages for the TrueType path:
+`pip install fonttools uharfbuzz`.
+
 ## 2026-10-14 — skeletons: the `.jnt` files decoded, armatures in the game's pose
 
 Models now import into Blender with a real armature instead of a flat

@@ -596,3 +596,129 @@ carry the audio; the 45 TOC `movie/mpeg2/*.pss` are video-only with
 - Read constants out of the lifted Java class constant pools instead of
   disassembling MIPS.
 - Check community tools (xentax, github) BEFORE brute-forcing GS swizzles.
+
+
+## Fonts (`font.py`) — layout via XS1KOR, addressing from the executable
+
+`font0.tex` (dialogue face) and `font1.tex` (menu face), chain 0, one copy
+each, 492,096 bytes on the USA disc (491,776 on the Japanese one). The GS
+layout was worked out by poketony for [XS1KOR](https://github.com/poketony/XS1KOR),
+the Korean localisation of the Japanese disc; it is re-implemented in
+`font.py` from that description. The addressing and metrics rules below
+come from the unstripped `SLUS_204.69` (`xglFontGetKanjiClutUV`,
+`xglFontCheckProportional`, `xglFontGetProportionalSize`,
+`xglFontAscii2Euc`, `xglFontGetStringWidth2`) and were checked against the
+rendered sheets: for every ASCII glyph the metrics pair equals the inked
+columns of the cell the mapping picks.
+
+```
+0x00000  0x20 header: 12 zero bytes, BE u16 0x013C 0x0051 0x00BC 0 0 0x0008, zeros
+0x00020  block 0, 0x3C000 bytes          -> sheets 0, 1
+0x3C020  0x20 header (identical)
+0x3C040  block 1, 0x3C000 bytes          -> sheets 2, 3
+0x78040  metrics: (left, right) byte pairs per proportional slot
+         USA 256 pairs (to 0x78240); JP 96 pairs (to 0x78100)
+```
+
+A block is a 320x192 PSMCT32 upload (`dbw` 0x140) that the engine reads
+back as a 640x768 PSMT4 texture (six 128-row tiles, `dbw` 64): walk the
+PSMCT32 swizzle to place the words in GS memory, then the PSMT4 swizzle
+to read nibbles. Nibble bits 0-1 are one 4-level sheet, bits 2-3 another.
+A sheet is 32 x 32 cells of 20 x 24 px; a file holds 4,096 cells.
+
+**Cells.** JIS X 0208 order, 94 per row from cell 0, with two folds:
+
+| cell | content |
+|---|---|
+| 0 .. 657 | rows 1-7 (symbols, digits, Latin, kana, Greek, Cyrillic) |
+| 658 .. 751 | row 13 (circled numbers, units) *and* row 8 (box drawing) — the engine maps both here; row 8's glyphs in the shipped sheet sit 33 cells earlier, so box drawing was never drawable |
+| 752 .. 3665 | rows 16-46 kanji, linear (`752 + (row-16)*94 + cell`) |
+| 3666 .. 3743 | row 47: the last level-1 kanji, then 32 extra kanji the USA script needs |
+| 3744 .. 4031 | USA block: 32 more kanji (codes 0xD0A1..0xD0C0), then the **256 proportional cells** (0xD0C1..0xD3xx) |
+| 4032 .. 4095 | a tiny ruby face (kana + ASCII at half size) |
+
+Rows 9-12 and 14-15 are unassigned in JIS and alias kanji cells — they
+are not free space. `cell_of_code()` is the engine's formula:
+`94*hi + lo - 0xA1`, plus `0xC4E2` for rows below 13, `0xC30C` for rows
+13-15, `0xC250` from row 16 (all mod 0x10000). Cell → sheet `>> 10`, row
+`(>> 5) & 31`, column `& 31`.
+
+**Proportional text** (what dialogue uses) does not draw the full-width
+row-3 Latin cells. `xglFontCheckProportional` turns a code into a slot
+0..255 (digits 0-9, A-Z 11-36, space 37, a-z 38-63; the USA punctuation
+and Latin-1 rows through a bit permutation that `font.prop_index()`
+reproduces), the metrics pair for that slot is `(left, right)` — the
+inked columns of the glyph's cell — and the drawn advance is
+`right - left + 3`. A pair whose `left` is 0 means "no metrics": the
+engine substitutes a default width, so new proportional glyphs must ink
+from column 1. The cell drawn for a slot is `3744 + n` where *n* is the
+code's offset from 0xD0A1 in 94-per-row order (`font.cell_of_prop()`), so
+the whole proportional face is the eight rows 3776..4031 of sheet 3. Slot
+usage on the USA disc: 229 of 256.
+
+`xglFontAscii2Euc` maps ASCII bytes to these codes (table in `font.py`:
+letters and digits to row 3, punctuation to the 0xD1/0xD2 block, `\` to
+the yen cell) and `#xx` in a string selects code 0xD0A1 + 0x20 + xx.
+Two-byte codes written raw in text take exactly the same path as the
+output of that table (`xglFontGetStringWidth2` classifies bytes ≥ 0x80 as
+code pairs and calls `CheckProportional` on them), which is what lets a
+translation use the proportional block for a new script.
+
+Mail text (`.uml`) starts with `15 02 04 07`: control 0x15 sets the
+width mode byte; mode non-zero makes every glyph advance a fixed 10 px.
+Control-code operand lengths (`xglFontGetSPcodeSize`): one byte for
+0x01-0x05, 0x0D, 0x18, 0x19, 0x1B; three for 0x06, 0x0C, 0x0F; five for
+0x0E, 0x10; six 0x11; two 0x12, 0x13; seven 0x17; 0x08 takes a flag byte
+plus 2/2/3/2/2 bytes per set bit 0-4; 0x15 takes a length byte and that
+many more. `font.control_length()` encodes the table.
+
+## UML mail objects — text region may grow
+
+```
+0x00  "UML\0" "@@@@"  flags…
+0x20  u32 image block start (= end of the text region, 16-byte aligned)
+0x28  (u32 image offset, u32 display position) pairs, up to 7, 0 = unused
+0x60  EUC-JP text with control codes, NUL-terminated, space-padded
+...   JPEG stream(s) + tail
+```
+
+The pointer table and the alignment rule are from XS1KOR's `uml_tool.py`.
+`textpack.uml_rebuild()` keeps the retail layout while the text fits the
+old slot; past it, the image block moves to the next 16-byte boundary
+after the NUL and every pointer at 0x20/0x28+8k inside the old block is
+shifted. Verified: identity rebuild of all 326 mails is byte-exact.
+
+## FL00 rebuild (`evttext.py`) — when a class changes size
+
+Splice the new class payload at its table row's `data_off`, then add the
+size delta to every later row's `name_off` and `data_off`, to the
+directory-name offset at 0x0C, and set 0x08 to the new file length. The
+entry table itself never changes size. This is the shift rule XS1KOR's
+`xeno_evt.py` established; `evttext.selftest` confirms an identity rebuild
+of all 567 scene/cutscene containers (chains 0, 1 and 2) is byte-exact.
+`base.evt`/`system.evt` carry extra rows between the table and the first
+class and are refused (nothing to translate in them anyway).
+
+Class files are re-serialised from their parsed constant pool, so a
+`CONSTANT_Utf8` may take any length up to 65,535 bytes; the packer's
+trailing NUL is preserved when present.
+
+## TOC: three chains, and relocated objects
+
+The second layer of the DVD-9 carries its own ISO9660 volume (PVD at
+sector 2,077,328 = layer 0's volume-space count; file LBAs relative to
+2,077,312) with `XENOSAGA.20`-`.24`: **chain 2**, 266 objects — 89
+cutscene `.evt`, 58 movies, 44 voice streams, 42 `.fpk`, 33 `.arc` — none
+of which are in chains 0/1. Same TOC grammar; `iso9660.py` walks both
+volumes and `chains.py` lists all three chains.
+
+Every chain is packed to the sector: the only slack is inside the last
+sector of each object. The engine addresses objects by raw sector
+(`xglCdReadFile` → `sceCdRead`, LBA = TOC file LBA + entry sector), so
+`repack.patch_iso(grow=True)` appends an object that outgrew its slot to
+the end of the image, repoints the entry's u24 sector and bumps the
+layer-1 volume-space count. The image was 4,134,912 sectors; the DVD-9
+ceiling is 4,173,824, about 78 MB of growth before it stops being
+burnable (emulators do not care). The idea of relocating instead of
+rebuilding is XS1KOR's; the append placement is this kit's, forced by the
+packed layout.

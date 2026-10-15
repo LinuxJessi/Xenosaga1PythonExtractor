@@ -65,7 +65,8 @@ BINARIES = [(str(FFMPEG), "tools")] if FFMPEG.exists() else []
 # are load-bearing. ssd_render pulls numpy transitively (WAV/FLAC rendering);
 # without numpy in the build env music-export still emits MIDI + SoundFont.
 HIDDEN = ["arx", "browse", "carve", "chains", "evt", "iso9660", "toc",
-          "repack", "pinkhair", "textpack", "subs", "ssd", "ssd_render"]
+          "repack", "pinkhair", "textpack", "subs", "ssd", "ssd_render",
+          "evttext", "font", "glyphs", "langpack"]
 
 
 def _ver(name):

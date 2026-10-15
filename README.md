@@ -17,6 +17,24 @@ The kit ships no game data. You need your own copy of the disc.
 
 ## What's new (October 2026)
 
+* **Translation without length limits.** Cutscene and field dialogue now
+  exports and imports like the rest of the text (`evt-export` /
+  `evt-import`, any length, all three chains), mails may grow, and an
+  object that no longer fits its slot on the disc can be relocated
+  (`--grow`). The second layer's chain of 89 cutscenes, 58 movies and 44
+  voice streams is read like the other two.
+* **Scripts the game never had.** The fonts are decoded and rebuilt
+  byte-exactly, and `lang scan` / `lang encode` draw a translation's
+  Arabic, Hebrew, Devanagari (or any HarfBuzz-shaped script) glyphs from a
+  TrueType font into the game's proportional font and encode the text
+  shaped, wrapped and right-to-left where it should be. Two scripts can
+  share one font pair (`--extend`), mixed-script words keep their Latin
+  halves, and the disc's own symbols and control codes pass through.
+  Seen running on PCSX2: an Arabic dialogue line and an Amharic mail,
+  drawn by the game itself from the rebuilt fonts.
+  [docs/SCRIPTS.md](docs/SCRIPTS.md). Several of the formats behind this
+  were first worked out by poketony for the Korean localisation
+  [XS1KOR](https://github.com/poketony/XS1KOR).
 * **Models open in Blender, rigged.** Every character, enemy, weapon,
   mech, prop and map on the disc comes out as a `.glb` with its texture
   inside. File ▸ Import ▸ glTF 2.0 and you have the mesh, its UVs,
@@ -153,16 +171,23 @@ pipeline has been proven in-game.
   every file fits, re-encodes it, and writes a patched ISO only when all
   of them pass.
 * **Cutscene dialogue.** Spoken lines in cutscenes live inside the Java
-  scripts. Same-length replacements work today and run in the game; the
-  opening tutorial has been played through in French. Lines that change
-  length need a class-file rewriter, which is on the list.
+  scripts. `evt-export` writes them out, one line per string, and
+  `evt-import` rebuilds the scripts around translations of any length.
+  Objects that outgrow their place on the disc are relocated with
+  `--grow`. Same-length byte swaps still work for a quick in-game check;
+  the opening tutorial has been played through in French that way.
+* **Other alphabets.** `lang scan` builds the glyphs your translation
+  uses from a TrueType font into the game's font files; `lang encode`
+  shapes, wraps and orders the text (right-to-left for Arabic and Hebrew)
+  and writes the codes the importers take. [docs/SCRIPTS.md](docs/SCRIPTS.md).
 * **Movie subtitles.** The cutscene movies have no subtitle track at all,
   so the kit gives you a timing template, lets you write and time the
   lines in any SRT editor, and burns them into the video with the
   original audio untouched. [docs/SUBTITLES.md](docs/SUBTITLES.md).
 * **Guides.** A step-by-step French walkthrough in
   [docs/FRENCH-TRANSLATION-GUIDE.md](docs/FRENCH-TRANSLATION-GUIDE.md),
-  and the groundwork for right-to-left scripts in
+  the multi-script pipeline in [docs/SCRIPTS.md](docs/SCRIPTS.md), and
+  the original right-to-left design notes in
   [docs/ARABIC-TRANSLATION-SPEC.md](docs/ARABIC-TRANSLATION-SPEC.md).
 
 ## Modding
@@ -220,7 +245,7 @@ please open an issue with the exact error.
 | [BLENDER.md](docs/BLENDER.md) | bring the models into Blender |
 | [MODDING.md](docs/MODDING.md) | change the game: patching, recolours, translation, verification |
 | [SUBTITLES.md](docs/SUBTITLES.md) | add subtitles to the cutscenes |
-| [FRENCH-TRANSLATION-GUIDE.md](docs/FRENCH-TRANSLATION-GUIDE.md), [ARABIC-TRANSLATION-SPEC.md](docs/ARABIC-TRANSLATION-SPEC.md) | translate the game, step by step |
+| [FRENCH-TRANSLATION-GUIDE.md](docs/FRENCH-TRANSLATION-GUIDE.md), [SCRIPTS.md](docs/SCRIPTS.md), [ARABIC-TRANSLATION-SPEC.md](docs/ARABIC-TRANSLATION-SPEC.md) | translate the game, step by step; into other alphabets |
 | [MUSIC.md](docs/MUSIC.md) | understand and render the soundtrack |
 | [JAVA.md](docs/JAVA.md) | read the cutscene scripts |
 | [FORMATS.md](docs/FORMATS.md) | see the byte-level details of every file format |
@@ -240,7 +265,14 @@ is pushed.
 ARX decompression, the texture canvas layout and the model format were
 learned from [Lakuwu's xenotool](https://github.com/Lakuwu/xenotool) and
 re-implemented here, with credit where each piece is used in
-[docs/FORMATS.md](docs/FORMATS.md). The ARX compressor, the table of
+[docs/FORMATS.md](docs/FORMATS.md). The font files' GS layout, the FL00
+shift rules for resized classes, the mail objects' pointer table and the
+idea of relocating grown objects rather than rebuilding the disc were
+first worked out by poketony for [XS1KOR](https://github.com/poketony/XS1KOR),
+the Korean localisation of the Japanese release, and re-implemented here
+for the USA disc; the engine-side cell addressing, the proportional-slot
+permutation and the metrics semantics were recovered from the
+executable for this kit. The ARX compressor, the table of
 contents, the hidden-layer movie carver, the Java class carver, the
 audio and music decoders, the overlay-palette and model-material
 texture work, and the whole repack layer were reverse-engineered for

@@ -183,11 +183,9 @@ Encoding safety nets, in order:
   screen. Any dialogue translation that "works" in the text tree but not
   in-game has fallen into exactly this trap.
 
-A full dialogue translation needs a class-file string rewriter plus an
-FL00 container rebuilder — the formats are documented (FORMATS.md,
-JAVA.md, `evt.py` carves classes by structure), but the writer does not
-exist yet; length-changing edits shift the constant pool. **Same-length
-edits, however, ship today**, with the kit alone:
+A full dialogue translation goes through `evt-export`/`evt-import`
+(`evttext.py`, see the end of this section). The same-length byte swap
+below still works and is the quickest smoke test there is:
 
 ### Worked example: one dialogue line to French
 
@@ -234,6 +232,40 @@ input** — the patched line is literally the first thing the game shows
 (boot-flow files `base.evt` / `system.evt` / ELF verified bit-identical
 to retail while this happens; it is the game's own cold open). Boot the
 patched ISO, read the first dialog box, done.
+
+### Length changes, dialogue, and scripts the font never had
+
+Three things that were on the list are now in the kit, each learned in
+part from poketony's [XS1KOR](https://github.com/poketony/XS1KOR), the
+Korean localisation of the Japanese disc (credits in FORMATS.md):
+
+- **Dialogue of any length.** `evt-export` writes every string literal of
+  every scene/cutscene script (all three chains, 44,605 strings in 568
+  containers — flags and file names included, so translate what reads as
+  dialogue and leave the rest) as `@class.index<TAB>text` lines;
+  `evt-import` re-serialises the classes and rebuilds the FL00 container
+  around them. Same validation style as text-import: all or nothing, with
+  the overage listed per container.
+- **Mails of any length.** `.uml` text may now grow; the images are
+  shifted and their pointers fixed (FORMATS.md § UML).
+- **Objects of any size.** `--grow` on `text-import`/`evt-import` (or
+  `patch_iso(grow=True)`) relocates an object that no longer fits its
+  sector allocation to the end of the image and repoints its TOC entry.
+  Without the flag the old refusal stands. Budget: about 78 MB of growth
+  keeps the image under the DVD-9 ceiling.
+- **Other scripts.** `font.py` reads and writes the two font files
+  exactly (FORMATS.md § Fonts) and `cli.py lang scan/encode` builds the
+  glyphs a translation needs from a TrueType font and turns the
+  translated tree into font codes — shaped, wrapped, right-to-left where
+  the script is. Walkthrough: [SCRIPTS.md](SCRIPTS.md).
+
+Verified: byte-exact identity rebuilds (567 containers, 326 mails, both
+fonts); relocation read back through the TOC on a scratch copy of the
+disc; and **in-game on PCSX2** (2026-10-14) an Arabic cold-open dialogue
+line and an Amharic mail body drawn from the rebuilt fonts — screenshots
+and the recipe in [SCRIPTS.md](SCRIPTS.md) § Worked example. Still
+unverified: a relocated object past the original image end actually
+loading in the game (the scratch build exists, it has not been booted).
 
 ## 6. Debugging against the running game (PINE)
 

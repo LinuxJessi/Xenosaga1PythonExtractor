@@ -312,7 +312,75 @@ def build_text_import(form):
         raise ValueError("Edited text directory is required")
     if not out:
         raise ValueError("Output ISO path is required")
-    return [*CLI_ARGV, "text-import", "--iso", iso, "--text", text, "--out", out]
+    args = [*CLI_ARGV, "text-import", "--iso", iso, "--text", text, "--out", out]
+    if _bool(form, "grow"):
+        args.append("--grow")
+    return args
+
+
+def build_evt_export(form):
+    iso = _str(form, "iso")
+    out = _str(form, "out")
+    if not iso:
+        raise ValueError("ISO path is required")
+    if not out:
+        raise ValueError("Dialogue directory is required")
+    return [*CLI_ARGV, "evt-export", "--iso", iso, "--out", out]
+
+
+def build_evt_import(form):
+    iso = _str(form, "iso")
+    text = _str(form, "text")
+    out = _str(form, "out")
+    if not iso:
+        raise ValueError("ISO path is required")
+    if not text:
+        raise ValueError("Edited dialogue directory is required")
+    if not out:
+        raise ValueError("Output ISO path is required")
+    args = [*CLI_ARGV, "evt-import", "--iso", iso, "--text", text, "--out", out]
+    if _bool(form, "grow"):
+        args.append("--grow")
+    return args
+
+
+def build_lang_scan(form):
+    iso = _str(form, "iso")
+    text = _str(form, "text")
+    ttf = _str(form, "font")
+    out = _str(form, "out")
+    if not iso or not text or not ttf or not out:
+        raise ValueError("ISO, translated tree, TrueType font and output directory are required")
+    args = [*CLI_ARGV, "lang", "scan", "--iso", iso, "--text", text, "--font", ttf, "--out", out]
+    script = _str(form, "script")
+    if script:
+        args += ["--script", script]
+    lang = _str(form, "language")
+    if lang:
+        args += ["--language", lang]
+    px = _str(form, "px")
+    if px and px != "20":
+        args += ["--px", px]
+    if _bool(form, "rtl"):
+        args.append("--rtl")
+    if _bool(form, "reclaim_latin"):
+        args.append("--reclaim-latin")
+    return args
+
+
+def build_lang_encode(form):
+    text = _str(form, "text")
+    gs = _str(form, "glyphset")
+    out = _str(form, "out")
+    if not text or not gs or not out:
+        raise ValueError("Translated tree, glyphset.json and output directory are required")
+    args = [*CLI_ARGV, "lang", "encode", "--text", text, "--glyphset", gs, "--out", out]
+    width = _str(form, "width")
+    if width and width != "0":
+        args += ["--width", width]
+    if _bool(form, "right"):
+        args += ["--align", "right"]
+    return args
 
 
 def build_subs_template(form):
@@ -384,6 +452,10 @@ BUILDERS = {
     "patch":         build_patch,
     "text-export":   build_text_export,
     "text-import":   build_text_import,
+    "evt-export":    build_evt_export,
+    "evt-import":    build_evt_import,
+    "lang-scan":     build_lang_scan,
+    "lang-encode":   build_lang_encode,
     "subs-template": build_subs_template,
     "subs-burn":     build_subs_burn,
     "layer1-list":   build_layer1_list,
@@ -1463,7 +1535,74 @@ async function loadStatus() {
       {name: 'text', label: 'Edited text dir',  placeholder: 'the tree from Export text',
        pick: {mode: 'dir'}},
       {name: 'out',  label: 'Output ISO',       placeholder: 'path for the translated ISO copy'},
+      {name: 'grow', label: 'Relocate objects that outgrow their slot (appends to the image)', type: 'checkbox'},
     ], 'Import text'));
+
+  cards.appendChild(makeCard(9.1, 'evt-export', 'Export scene dialogue (cutscenes and field events)',
+    'The lines spoken in cutscenes and field events live inside the Java <code>.evt</code> scripts, ' +
+    'not in the text objects above. This writes one text file per script (all three chains, ' +
+    'including the second-layer cutscenes) with every string literal on its own line: ' +
+    '<code>@class.index&lt;TAB&gt;text</code>. Translate the text after the tab, any length; ' +
+    'leave the key and the <code>⟦XX⟧</code> byte markers alone.',
+    [
+      {name: 'iso', label: 'Retail ISO', value: defaultIso,
+       pick: {mode: 'file', filter: 'iso'}},
+      {name: 'out', label: 'Dialogue dir', placeholder: 'directory for the dialogue text tree',
+       pick: {mode: 'dir'}},
+    ], 'Export dialogue'));
+
+  cards.appendChild(makeCard(9.2, 'evt-import', 'Import translated dialogue',
+    'Rebuilds every changed script around the new strings (class files re-serialised, the ' +
+    'FL00 container\'s table shifted) and writes a patched ISO. A script that grows past its ' +
+    'sector allocation is refused with the overage listed — or relocated to the end of the ' +
+    'image when the box is ticked. Nothing is written until every file passes.',
+    [
+      {name: 'iso',  label: 'Retail ISO',        value: defaultIso,
+       pick: {mode: 'file', filter: 'iso'}},
+      {name: 'text', label: 'Edited dialogue dir', placeholder: 'the tree from Export dialogue',
+       pick: {mode: 'dir'}},
+      {name: 'out',  label: 'Output ISO',        placeholder: 'path for the translated ISO copy'},
+      {name: 'grow', label: 'Relocate scripts that outgrow their slot', type: 'checkbox', value: true},
+    ], 'Import dialogue'));
+
+  cards.appendChild(makeCard(9.3, 'lang-scan', 'Other scripts: 1. build the glyphs (Arabic, Hebrew, Hindi, …)',
+    'For a translation into a script the disc\'s font never had. Shapes every string of the ' +
+    'translated tree with HarfBuzz, collects the glyphs it uses, gives each a slot in the ' +
+    'game\'s font (proportional slots first, kanji cells for the overflow) and draws them from ' +
+    'a TrueType font into <code>font0.tex</code>/<code>font1.tex</code>. Needs ' +
+    '<code>pip install fonttools uharfbuzz</code>. Writes <code>glyphset.json</code> plus the ' +
+    'two fonts; patch the fonts in with the <em>Patch disc objects</em> card.',
+    [
+      {name: 'iso',      label: 'Retail ISO',  value: defaultIso,
+       pick: {mode: 'file', filter: 'iso'}},
+      {name: 'text',     label: 'Translated tree', placeholder: 'text-export / evt-export tree, translated',
+       pick: {mode: 'dir'}},
+      {name: 'font',     label: 'TrueType font', placeholder: 'e.g. Amiri-Regular.ttf',
+       pick: {mode: 'file'}},
+      {name: 'script',   label: 'Script tag',  placeholder: 'Arab, Hebr, Deva, Cyrl, …'},
+      {name: 'language', label: 'Language',    placeholder: 'ar, he, hi, …'},
+      {name: 'px',       label: 'Em size (px)', value: '20'},
+      {name: 'rtl',      label: 'Right-to-left script', type: 'checkbox'},
+      {name: 'reclaim_latin', label: 'Translation uses no Latin letters (free those slots too)', type: 'checkbox'},
+      {name: 'out',      label: 'Output dir',  placeholder: 'directory for glyphset.json + fonts',
+       pick: {mode: 'dir'}},
+    ], 'Build glyphs'));
+
+  cards.appendChild(makeCard(9.4, 'lang-encode', 'Other scripts: 2. encode the text',
+    'Turns the translated tree into one the importers accept: words shaped and measured, ' +
+    'lines wrapped to a pixel width, right-to-left lines put in visual order (Latin names and ' +
+    'numbers kept forward, brackets mirrored), glyphs written as <code>⟦XX⟧</code> codes. ' +
+    'Then run <em>Import text</em> / <em>Import dialogue</em> on the encoded tree.',
+    [
+      {name: 'text',     label: 'Translated tree', placeholder: 'the same tree given to Build glyphs',
+       pick: {mode: 'dir'}},
+      {name: 'glyphset', label: 'glyphset.json', placeholder: 'from Build glyphs',
+       pick: {mode: 'file'}},
+      {name: 'width',    label: 'Wrap width (px, 0 = none)', value: '0'},
+      {name: 'right',    label: 'Right-align lines', type: 'checkbox'},
+      {name: 'out',      label: 'Encoded tree',  placeholder: 'directory for the encoded copy',
+       pick: {mode: 'dir'}},
+    ], 'Encode text'));
 
   cards.appendChild(makeCard(10, 'patch', 'Patch disc objects (advanced)',
     'Replace any TOC object with a local file and write a modified ISO — the generic ' +

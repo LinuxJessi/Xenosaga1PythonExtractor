@@ -222,7 +222,8 @@ Not wired into the GUI; run directly when digging:
 | understand the disc format | `toc.py` docstring, then [FORMATS.md](FORMATS.md) |
 | add a new asset decoder | a sibling in `browse.py` (e.g. `decode_voice_stream`), wire into `build_browse` |
 | build a new mod | `repack.py` (it's 188 lines), then `pinkhair.py` as the worked example |
-| translate the game | [MODDING.md](MODDING.md) §5, then `textpack.py` |
+| translate the game | [MODDING.md](MODDING.md) §5, then `textpack.py` and `evttext.py` |
+| translate into another alphabet | [SCRIPTS.md](SCRIPTS.md), then `font.py` → `glyphs.py` → `langpack.py` |
 | decompile cutscene logic | [JAVA.md](JAVA.md), then `evt.py` |
 | add a command end-to-end | [MODDING.md](MODDING.md) §7 (the four touch points) |
 | trust but verify | `cli.py cmd_verify`, plus the checklist in [MODDING.md](MODDING.md) §8 |
@@ -238,3 +239,35 @@ anything visual, [MODDING.md](MODDING.md) §6 shows how to dump the
 running game's RAM over PCSX2's PINE socket and check what the engine
 *actually* loaded. When you change the code, keep that property: prefer
 adding a check to trusting a formula.
+
+
+## Added in the translation update (October 2026)
+
+**`evttext.py`** — scene dialogue in and out of the `.evt` Java scripts
+at any length: `parse_pool`/`serialize` for class files, `fl00_rebuild`
+for the container, `strings_of`/`rebuild` as the API, a text format of
+`@class.index<TAB>text` lines, and a `selftest` that must reproduce every
+retail container byte-for-byte.
+
+**`font.py`** — the two bitmap fonts: `Font.from_bytes`/`to_bytes` (GS
+unswizzle and back, exact), four 640x768 sheets of 20x24 cells, the
+metrics table, and the engine's own addressing rules (`cell_of_code`,
+`prop_index`, `cell_of_prop`, `ascii_to_code`, `width_of_bytes`). PNG in
+and out with stdlib `zlib`.
+
+**`glyphs.py`** — give a new script cells in those fonts: `GlyphSet`
+(keys → slots, proportional first, kanji cells for overflow, JSON on
+disk), `from_png` for hand-drawn cells, and `TTFRenderer` (HarfBuzz
+shaping + fontTools outlines + a stdlib scanline rasteriser) for the
+automatic path. The two optional packages are the only non-stdlib
+dependency in the kit besides numpy for music rendering.
+
+**`langpack.py`** — the text side: tokenise (control codes kept in
+logical order), shape per word, measure with the new metrics, wrap to a
+pixel width, order runs for right-to-left paragraphs (UBA levels for
+runs, mirrored brackets), emit `⟦XX⟧` byte markers, and `render_line` for
+previews without the game.
+
+`repack.py` grew `grow=True` (append + repoint), `iso9660.py` the second
+volume, `chains.py` chain 2, `textpack.py` the `.uml` growth rules and
+EUC-JP.

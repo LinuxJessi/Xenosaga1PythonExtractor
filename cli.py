@@ -69,6 +69,7 @@ if hasattr(signal, "SIGPIPE"):
 from carve import scan_layer1
 from chains import CHAINS, ChainReader
 from evt import carve_classes
+from chains import available_chains
 from iso9660 import BOOT_RE, IsoImage
 from toc import parse_toc
 
@@ -86,7 +87,7 @@ def _entries(iso: IsoImage, chain: int):
 
 def cmd_list(args) -> int:
     iso = IsoImage(args.iso)
-    for chain in [args.chain] if args.chain is not None else [0, 1]:
+    for chain in [args.chain] if args.chain is not None else available_chains(iso):
         _, entries = _entries(iso, chain)
         for e in entries:
             flag = "C" if e.compressed else " "
@@ -98,7 +99,7 @@ def cmd_extract(args) -> int:
     iso = IsoImage(args.iso)
     out = Path(args.out)
     rows = []
-    chains = [args.chain] if args.chain is not None else [0, 1]
+    chains = [args.chain] if args.chain is not None else available_chains(iso)
     for chain in chains:
         reader, entries = _entries(iso, chain)
         if args.glob:
@@ -118,7 +119,9 @@ def cmd_extract(args) -> int:
             })
             if (i + 1) % 1000 == 0:
                 print(f"  {i + 1}/{len(entries)}", file=sys.stderr)
-    if not args.no_carve and args.glob is None and (args.chain is None):
+    if 2 in chains and not args.no_carve and args.glob is None:
+        print("layer 1: chain 2 holds the second-layer movies; raw carve skipped", file=sys.stderr)
+    if not args.no_carve and args.glob is None and args.chain is None and 2 not in chains:
         streams = scan_layer1(iso)
         print(f"layer 1: carving {len(streams)} movie streams", file=sys.stderr)
         ldir = out / "dump" / "layer1"
@@ -171,7 +174,7 @@ def cmd_classes(args) -> int:
     first_sha: dict[str, str] = {}      # fqcn -> sha1 of first-written content
     written_variants: set[str] = set()  # sha1s already on disk under any name
     n_evt = n_stub = n_dup = n_arx = 0
-    for chain in (0, 1):
+    for chain in available_chains(iso):
         reader, entries = _entries(iso, chain)
         for e in entries:
             if not e.path.lower().endswith(".evt"):
@@ -318,7 +321,44 @@ def cmd_text_export(args) -> int:
 def cmd_text_import(args) -> int:
     from textpack import import_text
 
-    return import_text(args.iso, args.text, args.out)
+    return import_text(args.iso, args.text, args.out, args.grow)
+
+
+def cmd_evt_export(args) -> int:
+    from evttext import export_dialogue
+
+    return export_dialogue(args.iso, args.out)
+
+
+def cmd_evt_import(args) -> int:
+    from evttext import import_dialogue
+
+    return import_dialogue(args.iso, args.text, args.out, args.grow)
+
+
+def cmd_font_extract(args) -> int:
+    import font
+    from repack import read_entry
+
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    for name in ("font0.tex", "font1.tex"):
+        (out / name).write_bytes(read_entry(args.iso, 0, name))
+        font.cmd_extract(str(out / name), str(out))
+    return 0
+
+
+def cmd_font_rebuild(args) -> int:
+    import font
+
+    return font.cmd_rebuild(args.ref, args.sheets, args.out, args.metrics)
+
+
+def cmd_lang(args) -> int:
+    import langpack
+
+    argv = [args.lang_cmd] + args.rest
+    return langpack.main(argv)
 
 
 def cmd_subs_template(args) -> int:
@@ -452,6 +492,11 @@ def main() -> int:
                      ("pinkhair", cmd_pinkhair),
                      ("text-export", cmd_text_export),
                      ("text-import", cmd_text_import),
+                     ("evt-export", cmd_evt_export),
+                     ("evt-import", cmd_evt_import),
+                     ("font-extract", cmd_font_extract),
+                     ("font-rebuild", cmd_font_rebuild),
+                     ("lang", cmd_lang),
                      ("subs-template", cmd_subs_template),
                      ("subs-burn", cmd_subs_burn),
                      ("layer1-list", cmd_layer1_list),
@@ -464,11 +509,18 @@ def main() -> int:
             p.add_argument("--out", required=True)
             p.set_defaults(fn=cmd_music_export)
             continue
-        if name not in ("browse", "subs-template", "subs-burn"):
+        if name == "lang":
+            p.add_argument("lang_cmd", choices=("scan", "encode", "preview"),
+                           help="langpack step; remaining options go to it "
+                                "(python langpack.py <step> -h)")
+            p.add_argument("rest", nargs=argparse.REMAINDER)
+            p.set_defaults(fn=fn)
+            continue
+        if name not in ("browse", "subs-template", "subs-burn", "font-rebuild"):
             p.add_argument("--iso", required=name not in ("verify",))
         p.set_defaults(fn=fn)
         if name in ("list", "extract"):
-            p.add_argument("--chain", type=int, choices=(0, 1))
+            p.add_argument("--chain", type=int, choices=(0, 1, 2))
         if name == "extract":
             p.add_argument("--out", required=True)
             p.add_argument("--glob")
@@ -504,6 +556,25 @@ def main() -> int:
                            help="edited text tree (from text-export)")
             p.add_argument("--out", required=True,
                            help="patched ISO to write")
+            p.add_argument("--grow", action="store_true",
+                           help="relocate objects that outgrow their allocation")
+        if name == "evt-export":
+            p.add_argument("--out", required=True,
+                           help="directory for the dialogue text tree")
+        if name == "evt-import":
+            p.add_argument("--text", required=True,
+                           help="edited dialogue tree (from evt-export)")
+            p.add_argument("--out", required=True, help="patched ISO to write")
+            p.add_argument("--grow", action="store_true",
+                           help="relocate containers that outgrow their allocation")
+        if name == "font-extract":
+            p.add_argument("--out", required=True,
+                           help="directory for font0/font1 .tex, sheet PNGs, metrics CSV")
+        if name == "font-rebuild":
+            p.add_argument("--ref", required=True, help="retail .tex to start from")
+            p.add_argument("--sheets", required=True, help="directory with edited sheet PNGs")
+            p.add_argument("--metrics", help="edited metrics CSV")
+            p.add_argument("--out", required=True, help=".tex to write")
         if name == "subs-template":
             p.add_argument("--src", required=True, help="source .pss movie")
             p.add_argument("--out", required=True, help="SRT skeleton to write")

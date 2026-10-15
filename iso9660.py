@@ -5,9 +5,14 @@ Episode III kit there is **no 7-Zip dependency** — the standard library is
 enough. Only what the extractor needs is implemented: the primary volume
 descriptor, a recursive directory walk, and extent reads via mmap.
 
-The image is 8.47 GB but the ISO9660 volume only describes the first
-~4.25 GB (layer 0). The rest of the disc — all of layer 1 — is raw movie
-data outside the filesystem; see ``carve.py``.
+The image is a dual-layer DVD-9 (8.47 GB). Layer 0's ISO9660 volume
+describes the first ~4.25 GB; layer 1 carries a **second** volume (its own
+PVD at the sector where layer 0's volume-space count ends) holding
+``XENOSAGA.20``-``.24``, the third bigfile chain (chain 2 in ``chains.py``:
+the second half of the cutscenes, voices and movies). Both volumes are
+walked here; layer-1 files get absolute LBAs so reads need no special
+casing. ``carve.py`` predates this and still scans layer 1 raw; both views
+agree on the bytes.
 """
 from __future__ import annotations
 
@@ -31,6 +36,7 @@ class IsoFile:
     lba: int
     size: int
     is_dir: bool
+    layer: int = 0  # 0 = first volume, 1 = second (dual-layer) volume
 
 
 class IsoImage:
@@ -47,10 +53,26 @@ class IsoImage:
         self.files: Dict[str, IsoFile] = {}
         for f in self._walk(root_lba, root_len, ""):
             self.files[f.path] = f
+        # second volume (DVD-9 layer 1): PVD sits at layer 0's volume end,
+        # its LBAs are relative to 16 sectors before that PVD
+        self.layer2_base: Optional[int] = None
+        self.layer2_pvd_sector: Optional[int] = None
+        l2 = self.volume_sectors
+        if (l2 + 1) * SECTOR <= len(self.mm) and self.mm[l2 * SECTOR + 1:l2 * SECTOR + 6] == b"CD001":
+            pvd2 = self.mm[l2 * SECTOR:(l2 + 1) * SECTOR]
+            base = l2 - 16
+            self.layer2_base = base
+            self.layer2_pvd_sector = l2
+            self.layer2_volume_sectors = struct.unpack_from("<I", pvd2, 80)[0]
+            r_lba = struct.unpack_from("<I", pvd2, 158)[0]
+            r_len = struct.unpack_from("<I", pvd2, 166)[0]
+            for f in self._walk(base + r_lba, r_len, "", base=base, layer=1):
+                self.files.setdefault(f.path, f)
 
     # -- filesystem ---------------------------------------------------------
 
-    def _walk(self, lba: int, length: int, prefix: str) -> Iterator[IsoFile]:
+    def _walk(self, lba: int, length: int, prefix: str,
+              base: int = 0, layer: int = 0) -> Iterator[IsoFile]:
         d = self.mm[lba * SECTOR : lba * SECTOR + length]
         i = 0
         while i < len(d):
@@ -62,14 +84,14 @@ class IsoImage:
             if nl == 1 and d[i + 33] in (0, 1):  # "." / ".."
                 i += rl
                 continue
-            elba = struct.unpack_from("<I", d, i + 2)[0]
+            elba = struct.unpack_from("<I", d, i + 2)[0] + base
             elen = struct.unpack_from("<I", d, i + 10)[0]
             is_dir = bool(d[i + 25] & 2)
             name = d[i + 33 : i + 33 + nl].decode("ascii", "replace").split(";")[0]
-            f = IsoFile(prefix + name, elba, elen, is_dir)
+            f = IsoFile(prefix + name, elba, elen, is_dir, layer)
             yield f
             if is_dir:
-                yield from self._walk(elba, elen, prefix + name + "\\")
+                yield from self._walk(elba, elen, prefix + name + "\\", base, layer)
             i += rl
 
     # -- reads --------------------------------------------------------------

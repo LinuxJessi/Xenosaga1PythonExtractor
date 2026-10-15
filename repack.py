@@ -2,21 +2,29 @@
 
 The disc is unusually mod-friendly: plain ISO9660, all game data inside a
 handful of contiguous bigfiles (chain 0 = XENOSAGA.00+.01+.02, chain 1 =
-XENOSAGA.10-.13, see ``chains.py``), every object addressed by a binary TOC
-whose grammar ``toc.py`` parses to the byte. So repacking never rebuilds the
-image — it overwrites the object's bytes at their computed offsets and, when
-a compressed object's stored size changes, patches the TOC entry in place.
+XENOSAGA.10-.13, chain 2 = XENOSAGA.20-.24 on the second layer, see
+``chains.py``), every object addressed by a binary TOC whose grammar
+``toc.py`` parses to the byte. So repacking never rebuilds the image — it
+overwrites the object's bytes at their computed offsets and, when a stored
+size changes, patches the TOC entry in place.
 
 Constraint: an object cannot outgrow its allocation (the gap to the next
-entry's sector, both TOC-relative). In practice palette/texture edits
-recompress to within a few bytes of retail — ``arx.compress`` reproduces
-retail blobs byte-identically on the whole disc corpus, so an untouched
-region costs nothing and a touched one only what the edit itself changes.
+entry's sector, both TOC-relative) — **unless** ``grow=True``. The engine
+reads objects by raw sector (``xglCdReadFile`` -> ``sceCdRead``, LBA = TOC
+file LBA + entry sector), so an object may live anywhere on the image: a
+grown object is appended after the last sector of the disc and its TOC
+sector repointed there. The second layer's volume-space count is bumped
+so the ISO9660 volume still covers every sector. The idea of relocating
+rather than rebuilding comes from poketony's XS1KOR workspace for the
+Japanese disc (https://github.com/poketony/XS1KOR); the append strategy
+here is this kit's own, chosen because every chain on the USA disc is
+packed to the sector with no free gaps.
 
 Usage (always work on a copy — patching is in-place):
 
     from repack import patch_iso
-    patch_iso("copy.iso", {(0, "char\\pc\\kosmos.xtx"): new_payload_bytes})
+    patch_iso("copy.iso", {(0, "char\\\\pc\\\\kosmos.xtx"): new_payload_bytes})
+    patch_iso("copy.iso", {(0, "scene\\\\ST0210.evt"): bigger}, grow=True)
 
 Payloads are given *uncompressed*; entries the TOC marks compressed are
 ARX-compressed automatically.
@@ -27,12 +35,14 @@ import mmap
 import struct
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import arx
 from chains import CHAINS
 from iso9660 import IsoImage
 from toc import SECTOR, TocEntry, parse_toc
+
+DVD9_SECTORS = 4_173_824          # 8,543,666,176 bytes, the single-sided DL ceiling
 
 
 class RepackError(ValueError):
@@ -47,10 +57,16 @@ class PatchReport:
     new_size: int
     allocation: int
     compressed: bool
+    relocated_lba: Optional[int] = None   # absolute sector, when grown
 
 
 class ChainWriter:
-    """Byte-addressed read/write view of one chain inside a writable ISO."""
+    """Byte-addressed read/write view of one chain inside a writable ISO.
+
+    Offsets are chain-relative (TOC file = offset 0). Inside the bigfiles
+    they map through the ISO9660 extents; beyond them (relocated objects)
+    through the engine's own rule, absolute = TOC LBA * 2048 + offset.
+    """
 
     def __init__(self, mm: mmap.mmap, iso: IsoImage, chain: int):
         self.mm = mm
@@ -62,13 +78,19 @@ class ChainWriter:
                 raise RepackError(f"{n} missing from ISO filesystem")
             self.extents.append((f.lba * SECTOR, f.size))
         self.total = sum(size for _, size in self.extents)
+        self.toc_lba = iso.files[self.names[0]].lba
 
     def _spans(self, offset: int, length: int) -> List[Tuple[int, int, int]]:
         """(abs_iso_offset, src_start, nbytes) spans covering the range,
         crossing bigfile boundaries as needed."""
-        if offset < 0 or offset + length > self.total:
-            raise RepackError(
-                f"chain range {offset}+{length} outside chain ({self.total})")
+        if offset < 0:
+            raise RepackError(f"negative chain offset {offset}")
+        if offset + length > self.total:
+            start = self.toc_lba * SECTOR + offset
+            if start + length > len(self.mm):
+                raise RepackError(
+                    f"chain range {offset}+{length} outside the image")
+            return [(start, 0, length)]
         spans, src = [], 0
         for base, size in self.extents:
             if offset >= size:
@@ -101,7 +123,10 @@ def _load_chain(mm, iso, chain):
 def _allocation(entry: TocEntry, entries: List[TocEntry], total: int) -> int:
     start = entry.byte_offset
     following = [e.byte_offset for e in entries if e.byte_offset > start]
-    return (min(following) if following else total) - start
+    end = min(following) if following else total
+    if start >= total:                     # already relocated past the chain
+        return max(end - start, (entry.size + SECTOR - 1) // SECTOR * SECTOR)
+    return end - start
 
 
 def read_entry(iso_path: str | Path, chain: int, path: str) -> bytes:
@@ -124,65 +149,119 @@ def _find(entries: List[TocEntry], path: str) -> TocEntry:
     raise RepackError(f"no TOC entry for {path!r}")
 
 
+def _plan(iso: IsoImage, replacements) -> Tuple[Dict, int]:
+    """Compress/validate every payload up front; return per-key blobs and the
+    number of sectors that must be appended for the ones that don't fit."""
+    plan = {}
+    extra = 0
+    loaded = {}
+    for (chain, path), payload in replacements.items():
+        if chain not in loaded:
+            loaded[chain] = _load_chain(iso.mm, iso, chain)
+        writer, entries, toc_base = loaded[chain]
+        entry = _find(entries, path)
+        alloc = _allocation(entry, entries, writer.total)
+        blob = arx.compress(payload) if entry.compressed else payload
+        if entry.compressed and arx.decompress(blob) != payload:
+            raise RepackError(f"{path}: ARX self-check failed")
+        if entry.compressed and len(payload) >= 1 << 24:
+            raise RepackError(f"{path}: usize exceeds u24")
+        fits = len(blob) <= alloc
+        if not fits:
+            extra += (len(blob) + SECTOR - 1) // SECTOR
+        plan[(chain, path)] = (blob, len(payload), entry, alloc, fits, toc_base)
+    return plan, extra
+
+
 def patch_iso(iso_path: str | Path,
               replacements: Dict[Tuple[int, str], bytes],
-              verbose: bool = True) -> List[PatchReport]:
+              verbose: bool = True,
+              grow: bool = False) -> List[PatchReport]:
     """Patch objects into ``iso_path`` **in place** (work on a copy!).
 
     ``replacements`` maps (chain, toc_path) -> uncompressed payload. Every
     write is verified by reading back and (for compressed entries) round-trip
     decompressing before the function returns.
+
+    With ``grow=True`` an object larger than its allocation is appended to
+    the end of the image (sector-aligned) and its TOC entry repointed;
+    without it the same case raises ``RepackError`` and nothing is written.
     """
     iso = IsoImage(iso_path)
     reports: List[PatchReport] = []
     try:
+        plan, extra_sectors = _plan(iso, replacements)
+        too_big = [p for (c, p), v in plan.items() if not v[4]]
+        if too_big and not grow:
+            c, p = next(k for k, v in plan.items() if not v[4])
+            blob, _, entry, alloc, _, _ = plan[(c, p)]
+            raise RepackError(
+                f"{p}: new size {len(blob)} exceeds allocation {alloc} "
+                f"(old size {entry.size}); pass grow=True to relocate it")
+        image_size = iso.image_size
+        if image_size % SECTOR:
+            raise RepackError("image size is not a multiple of 2048")
+        if extra_sectors:
+            with open(iso.path, "r+b") as fh:
+                fh.truncate(image_size + extra_sectors * SECTOR)
+            new_total = image_size // SECTOR + extra_sectors
+            if new_total > DVD9_SECTORS and verbose:
+                print(f"warning: image now {new_total} sectors, beyond the "
+                      f"DVD-9 ceiling of {DVD9_SECTORS}; fine for emulators, "
+                      f"not burnable")
         with open(iso.path, "r+b") as fh:
             mm = mmap.mmap(fh.fileno(), 0)
-            chains_needed = sorted({c for c, _ in replacements})
-            loaded = {c: _load_chain(mm, iso, c) for c in chains_needed}
+            writers = {c: ChainWriter(mm, iso, c) for c in {c for c, _ in plan}}
+            append_sector = image_size // SECTOR
+            for (chain, path), (blob, usize, entry, alloc, fits, toc_base) in plan.items():
+                writer = writers[chain]
+                if fits:
+                    offset = entry.byte_offset
+                    sector_field = None
+                    relocated = None
+                else:
+                    relocated = append_sector
+                    append_sector += (len(blob) + SECTOR - 1) // SECTOR
+                    sector_field = relocated - writer.toc_lba
+                    if sector_field >= 1 << 24:
+                        raise RepackError(f"{path}: relocated sector exceeds u24")
+                    offset = sector_field * SECTOR
+                writer.write(offset, blob)
+                if fits and len(blob) < entry.size:  # clear the stale tail
+                    writer.write(offset + len(blob), bytes(entry.size - len(blob)))
 
-            for (chain, path), payload in replacements.items():
-                writer, entries, toc_base = loaded[chain]
-                entry = _find(entries, path)
-                alloc = _allocation(entry, entries, writer.total)
-
-                blob = arx.compress(payload) if entry.compressed else payload
-                if entry.compressed and arx.decompress(blob) != payload:
-                    raise RepackError(f"{path}: ARX self-check failed")
-                if len(blob) > alloc:
-                    raise RepackError(
-                        f"{path}: new size {len(blob)} exceeds allocation "
-                        f"{alloc} (old size {entry.size})")
-
-                writer.write(entry.byte_offset, blob)
-                if len(blob) < entry.size:  # clear the stale tail
-                    writer.write(entry.byte_offset + len(blob),
-                                 bytes(entry.size - len(blob)))
-
+                f = toc_base + entry.fields_off
+                if sector_field is not None:
+                    mm[f:f + 3] = struct.pack("<I", sector_field)[:3]
                 if entry.compressed:
-                    if len(payload) >= 1 << 24:
-                        raise RepackError(f"{path}: usize exceeds u24")
-                    mm[toc_base + entry.fields_off + 3:
-                       toc_base + entry.fields_off + 7] = struct.pack(
-                           "<I", len(blob))
-                    mm[toc_base + entry.fields_off + 7:
-                       toc_base + entry.fields_off + 10] = struct.pack(
-                           "<I", len(payload))[:3]
+                    mm[f + 3:f + 7] = struct.pack("<I", len(blob))
+                    mm[f + 7:f + 10] = struct.pack("<I", usize)[:3]
                 elif len(blob) != entry.size:
-                    mm[toc_base + entry.fields_off + 3:
-                       toc_base + entry.fields_off + 7] = struct.pack(
-                           "<I", len(blob))
+                    mm[f + 3:f + 7] = struct.pack("<I", len(blob))
 
-                if writer.read(entry.byte_offset, len(blob)) != blob:
+                if writer.read(offset, len(blob)) != blob:
                     raise RepackError(f"{path}: read-back mismatch")
                 reports.append(PatchReport(chain, path, entry.size, len(blob),
-                                           alloc, entry.compressed))
+                                           alloc, entry.compressed, relocated))
                 if verbose:
+                    where = f" -> relocated to sector {relocated}" if relocated is not None else ""
                     print(f"patched chain{chain} {path}: "
                           f"{entry.size} -> {len(blob)} bytes "
-                          f"(allocation {alloc})")
+                          f"(allocation {alloc}){where}")
+            if extra_sectors:
+                _bump_volume(mm, iso, extra_sectors)
             mm.flush()
             mm.close()
     finally:
         iso.close()
     return reports
+
+
+def _bump_volume(mm: mmap.mmap, iso: IsoImage, sectors: int) -> None:
+    """Grow the volume-space count of the volume that ends the image."""
+    pvd_sector = iso.layer2_pvd_sector if iso.layer2_pvd_sector is not None else 16
+    base = pvd_sector * SECTOR
+    old = struct.unpack_from("<I", mm, base + 80)[0]
+    new = old + sectors
+    mm[base + 80:base + 84] = struct.pack("<I", new)
+    mm[base + 84:base + 88] = struct.pack(">I", new)
