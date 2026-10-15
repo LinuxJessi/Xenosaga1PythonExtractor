@@ -19,89 +19,104 @@ whole game's worth of cutscenes.
 
 ## What's actually verified, and what isn't
 
-Verified by testing against a real carved movie from this disc
-(`layer1_045`, 2.6 MB, 195 frames) and a real patched copy of the retail
-ISO:
+The container, measured on `movie\mpeg2\1001_1.pss` (20,004,868 bytes,
+1,495 frames at 29.97, 49.8 s):
 
-* The source `.pss` video is standard MPEG-2, Main Profile @ Main Level,
-  closed GOP (15 frames, 2 B-frames between references), progressive,
-  `yuv420p` — a mainstream, well-documented format, not something exotic
-  to this game. `subs.py` reads these parameters per-file via `ffprobe`
-  rather than hardcoding them, so it should generalize across all 103
-  movies even if a few differ.
-* `subs.splice()` reassembles the container with every pack/system/
-  audio/padding packet copied byte-for-byte from the original, in original
-  order — only the video track's PES payloads are replaced. The result
-  re-parses with the same packet grammar, decodes cleanly through `ffmpeg`
-  (`ffmpeg -v warning -i out.pss -f null -` — zero warnings beyond the
-  expected "no timestamp" notices), and produces the same frame count as
-  the source.
-* `layer1_patch()` writes the result into a copy of a real retail ISO,
-  verified by read-back, and every *other* carved movie's sector/size
-  stayed byte-identical afterward (`layer1-list` before/after matches) —
-  patching one movie doesn't disturb its neighbors.
-* The size constraint (patched movie ≤ original object's byte allocation)
-  is enforced by `fit_to_budget`'s iterative bitrate search before the
-  splice is even attempted, and re-checked after.
+* A run of **16,384-byte packs**: a 14-byte pack header, then PES
+  packets of **4,096 bytes** each (the last one shortened so the pack
+  closes exactly), video (`E0`) and audio (`BD`) interleaved about 5:1,
+  three padding packets near the end, a 15-byte system header in the
+  first pack, `00 00 01 B9` at the very end. 1,221 packs, 4,212 video
+  packets, 671 audio packets.
+* The video is standard MPEG-2, Main Profile @ Main Level, `yuv420p`,
+  512×448; the retail stream uses open GOPs (an I frame with two
+  leading B frames, 15 pictures) after a 16-picture first GOP, with one
+  sequence header for the whole stream. The re-encode uses closed GOPs
+  with a sequence header per GOP, which the player accepted.
+* 1,455 of the 1,495 pictures carry a PTS in the PES header of the
+  packet they start in (DTS too when it differs); the remaining ones
+  share a packet with an earlier picture.
 
-**Not** verified, because nothing short of the real thing can confirm it:
+What `splice()` now guarantees, checked on every run: the output is the
+same size as the source, every pack header, the system header and every
+audio packet sit at their original offsets byte-for-byte, every video
+slot is a PES packet of its original length (or a padding packet once
+the new stream is spent), picture stamps are monotonic in decode order,
+the stream ends with `sequence_end`, and `ffmpeg -v warning` decodes it
+silently. `fit_to_budget` now targets the elementary stream at the
+container's slot capacity, not the file size (which cannot change).
 
-* **Whether the PS2's IPU hardware decoder accepts the re-encoded stream.**
-  `ffmpeg`'s MPEG-2 decoder is deliberately lenient; PS2 hardware may be
-  stricter about quantization matrices, VBV timing, or other encoder
-  choices `ffmpeg`'s `mpeg2video` encoder makes that this module doesn't
-  control precisely. Boot a patched ISO in PCSX2 before trusting a batch.
-* **Audio/video sync over a long cutscene.** See the PTS section below —
-  timestamps are omitted entirely rather than reused incorrectly, which is
-  spec-legal but less precise than the original stream's periodic
-  PTS/DTS. Short movies are unlikely to show drift; check a long one.
-* **Font/rendering fidelity of the `subtitles` filter itself** — that's
-  `libass`/your chosen font's problem, not this module's, but it's worth a
-  visual check same as the accented-character caveat in
-  [FRENCH-TRANSLATION-GUIDE.md](FRENCH-TRANSLATION-GUIDE.md) Step 0.
+**Verified on PCSX2** (2026-10-15, v2.9.127, LANGTEST disc): see the
+results at the end of [SCRIPTS.md](SCRIPTS.md) for the boot of this
+movie with ten Hindi cues. Not verified: audio/video sync over a
+multi-minute cutscene (this one is 50 s), and the 58 layer-1 movies
+beyond `layer1-patch`'s read-back check.
 
-## The PTS/DTS decision (a real bug this was tested against)
+## The PTS/DTS decision (two real bugs this was tested against)
 
-The obvious-looking approach — reuse each original video packet's PTS/DTS
-bytes verbatim, since frame count and fps are unchanged so the timeline is
-still numerically valid — was tried and **rejected** after testing. On the
-sampled movie, video frames are split across PES packets at roughly 2.8
-packets per frame, not 1:1, and `splice()`'s proportional-by-byte-size
-re-chunking doesn't guarantee a "PTS-carrying slot" lands on the same
-decode-order frame it originally described once the payload has been
-resplit. Reusing the bytes anyway produced **non-monotonic DTS** values
-that `ffmpeg` flagged repeatedly (`Application provided invalid, non
-monotonically increasing dts`) — it warned rather than failed, but PS2
-hardware might not be as forgiving.
+The first version of `splice()` carried each original video packet's
+PTS/DTS bytes over verbatim. Frames are split across PES packets at
+roughly 2.8 packets per frame, so after the proportional re-chunking a
+stamp no longer sat on the picture it described: `ffmpeg` flagged
+non-monotonic DTS. The second version omitted PTS/DTS from every
+rebuilt video packet, which is spec-legal and round-tripped through
+`ffmpeg` with no warnings — and **hung the game**. Booted on PCSX2
+(2026-10-15, `1001_1.pss` with Hindi cues), the screen went black at the
+movie and the emulator log filled with `isoFile error: Block index is
+past the end of file` until a read abort: the console's player never got
+a picture it could schedule, streamed to the end of the disc and kept
+going. The retail muxer stamps nearly every picture (1,455 of 1,495 in
+that movie), and the player depends on it.
 
-The shipped behavior omits PTS/DTS from every rebuilt video packet, which
-is spec-legal (decoders fall back to deriving timing from the sequence
-header's frame-rate) and is the version that round-tripped through
-`ffmpeg` with zero warnings. The tradeoff: the original stream refreshed
-its timing anchor periodically (66 of 549 packets on the sample movie);
-the rebuilt one never does. If a long cutscene drifts audio from video in
-testing, that's the first thing to revisit — the fix would need actual
-per-frame PTS/DTS computed from decode order (accounting for B-frame
-reordering), not simply carried over.
+What ships now: `picture_units` splits the new elementary stream at
+every picture (taking the sequence/GOP header in front of it along),
+`picture_times` gives each picture a DTS one frame after the previous
+one in decode order and a PTS of its GOP's display base plus its
+temporal reference, on the original's time base (first PTS/DTS and
+3,003-tick frames read from the source), and `splice()` starts a PES
+packet at every picture with that stamp. Pack headers, the system header
+and every audio packet are still the original bytes in their original
+order; the stream ends with the sequence_end code the retail stream has
+(XS1KOR's "safe tail"). `ffmpeg` sees monotonic DTS and 1,495 stamped
+pictures. Whether the console's player is satisfied is the boot test in
+the next section's results.
 
 ## Workflow
 
 1. **Extract and convert the movie normally first** (`browse` /
    *Convert for browsing*) — you need the MP4 to actually watch/listen
    while timing cues.
-2. **`subs-template --src MOVIE.pss --out MOVIE.LANG.srt`** — a blank,
-   uniformly-spaced skeleton (default 5s cues). This is a starting point,
-   not a real auto-timer.
-3. **Time and translate in a real subtitle editor** (Aegisub, Subtitle
-   Edit — anything that edits SRT) against the extracted MP4. Retime every
-   cue by ear; don't trust the uniform spacing.
-4. **`subs-burn --src MOVIE.pss --srt MOVIE.LANG.srt --out MOVIE.LANG.pss`**
-   — requires an `ffmpeg` with the `subtitles` filter (`libass`). Check
-   with `ffmpeg -filters | grep subtitle`; not every build has it (a stock
-   Homebrew install on this project's own dev machine didn't, at time of
-   writing — don't assume). `--max-bytes` defaults to the source file's
-   own size, which is always safe since nothing here can grow past its
-   original allocation.
+2. **`subs-template --src MOVIE.pss --out MOVIE.LANG.srt --detect`** — an
+   SRT skeleton with one cue per interval the original burned-in subtitle
+   is on screen. The detector samples the subtitle band four times a
+   second and counts white pixels that have a dark outline next to them,
+   so a bright floor does not count as text; on the first Woglinde movie
+   (`1001_1.pss`) it found the ten lines with two stray cues in the noisy
+   opening shot and one pair of short lines merged. Without `--detect`
+   you get uniform 5 s cues. Either way, check the times against the
+   extracted MP4 and write the translation into each cue.
+3. **Time and translate in a real subtitle editor** if you prefer
+   (Aegisub, Subtitle Edit — anything that edits SRT). Multi-line cues
+   are fine; the burner centres each line.
+4. **`subs-burn --src MOVIE.pss --srt MOVIE.LANG.srt --out MOVIE.LANG.pss --font FONT.ttf`**
+   — with `--font` the kit renders every cue itself: HarfBuzz shaping (so
+   `--script Deva --language hi`, or `--script Arab --language ar --rtl`,
+   come out joined and ordered), white letters with a black outline and
+   shadow, one PNG per cue, composited by ffmpeg's plain `overlay`
+   filter. While a cue is up, the band where the original English sits
+   is blurred (`--mask x,y,w,h`, default `0,330,512,90`; `--mask none` to
+   leave it). This is the scheme poketony's XS1KOR used for the Korean
+   movies — fixed rows at 512×448, outline/shadow/dark spread over the
+   original line, then a size-guarded MPEG-2 re-encode muxed over the
+   untouched audio — minus libass, so any ffmpeg build works. The optional
+   `fonttools` and `uharfbuzz` packages are needed for `--font`; without
+   them, draw the cues in any image editor as `cue0001.png`,
+   `cue0002.png`… (RGBA, frame width) and pass `--cues DIR`. Without
+   either option the old libass `subtitles` filter is used, which many
+   ffmpeg builds (Homebrew's, on this project's own machine) do not have.
+   `--max-bytes` defaults to the source file's own size, which is always
+   safe since nothing here can grow past its original allocation;
+   `--keep-cues DIR` saves the rendered PNGs for a look.
 5. **Write it back**:
    - TOC-indexed movies (the 45 `movie\mpeg2\*.pss`): the existing generic
      `patch` command already handles this, unmodified —

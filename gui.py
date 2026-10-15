@@ -344,6 +344,72 @@ def build_evt_import(form):
     return args
 
 
+def build_ovl_export(form):
+    iso = _str(form, "iso")
+    out = _str(form, "out")
+    if not iso:
+        raise ValueError("ISO path is required")
+    if not out:
+        raise ValueError("Output directory is required")
+    return [*CLI_ARGV, "ovl-export", "--iso", iso, "--out", out]
+
+
+def build_ovl_import(form):
+    iso = _str(form, "iso")
+    text = _str(form, "text")
+    out = _str(form, "out")
+    if not iso:
+        raise ValueError("ISO path is required")
+    if not text:
+        raise ValueError("Edited strings directory is required")
+    if not out:
+        raise ValueError("Output ISO path is required")
+    args = [*CLI_ARGV, "ovl-import", "--iso", iso, "--text", text, "--out", out]
+    if _bool(form, "grow"):
+        args.append("--grow")
+    retail = _str(form, "retail")
+    if retail:
+        args += ["--retail", retail]
+    return args
+
+
+def build_statfont_scan(form):
+    iso = _str(form, "iso")
+    text = _str(form, "text")
+    ttf = _str(form, "font")
+    out = _str(form, "out")
+    if not iso:
+        raise ValueError("ISO path is required")
+    if not text:
+        raise ValueError("Translated tree is required")
+    if not ttf:
+        raise ValueError("TrueType font is required")
+    if not out:
+        raise ValueError("Output directory is required")
+    args = [*CLI_ARGV, "statfont", "scan", "--iso", iso, "--text", text, "--font", ttf, "--out", out]
+    for key, flag in (("script", "--script"), ("language", "--language"), ("px", "--px"),
+                      ("baseline", "--baseline"), ("face", "--face"), ("extend", "--extend")):
+        v = _str(form, key)
+        if v:
+            args += [flag, v]
+    if _bool(form, "rtl"):
+        args.append("--rtl")
+    return args
+
+
+def build_statfont_encode(form):
+    text = _str(form, "text")
+    mp = _str(form, "map")
+    out = _str(form, "out")
+    if not text:
+        raise ValueError("Translated tree is required")
+    if not mp:
+        raise ValueError("statfont.json is required")
+    if not out:
+        raise ValueError("Output directory is required")
+    return [*CLI_ARGV, "statfont", "encode", "--text", text, "--map", mp, "--out", out]
+
+
 def build_lang_scan(form):
     iso = _str(form, "iso")
     text = _str(form, "text")
@@ -411,6 +477,22 @@ def build_subs_burn(form):
     max_bytes = _str(form, "max_bytes")
     if max_bytes:
         args += ["--max-bytes", max_bytes]
+    font = _str(form, "font")
+    if font:
+        args += ["--font", font]
+        for key, flag in (("face", "--face"), ("px", "--px"), ("script", "--script"),
+                          ("language", "--language")):
+            v = _str(form, key)
+            if v:
+                args += [flag, v]
+        if _bool(form, "rtl"):
+            args.append("--rtl")
+    cues = _str(form, "cues")
+    if cues:
+        args += ["--cues", cues]
+    mask = _str(form, "mask")
+    if mask:
+        args += ["--mask", mask]
     return args
 
 
@@ -454,6 +536,10 @@ BUILDERS = {
     "text-import":   build_text_import,
     "evt-export":    build_evt_export,
     "evt-import":    build_evt_import,
+    "ovl-export":    build_ovl_export,
+    "ovl-import":    build_ovl_import,
+    "statfont-scan":   build_statfont_scan,
+    "statfont-encode": build_statfont_encode,
     "lang-scan":     build_lang_scan,
     "lang-encode":   build_lang_encode,
     "subs-template": build_subs_template,
@@ -1565,6 +1651,67 @@ async function loadStatus() {
       {name: 'grow', label: 'Relocate scripts that outgrow their slot', type: 'checkbox', value: true},
     ], 'Import dialogue'));
 
+  cards.appendChild(makeCard(9.25, 'ovl-export', 'Export menu and battle words (executable strings)',
+    'Tech names, "End", "Menu", item and skill descriptions and the field menu\'s labels are ' +
+    'C strings inside the five code overlays (<code>OV01.OVL</code> …) and the boot executable, ' +
+    'not in any text object. This writes one file per executable, ' +
+    '<code>@address&lt;TAB&gt;text</code>, listing every string the code points at. Translate ' +
+    'the text, keep the key.',
+    [
+      {name: 'iso', label: 'Retail ISO', value: defaultIso,
+       pick: {mode: 'file', filter: 'iso'}},
+      {name: 'out', label: 'Strings dir', placeholder: 'directory for the executable-strings tree',
+       pick: {mode: 'dir'}},
+    ], 'Export strings'));
+
+  cards.appendChild(makeCard(9.26, 'ovl-import', 'Import translated menu and battle words',
+    'Writes each changed string back in place when it fits its slot. With the box ticked, a ' +
+    'longer string is appended to the end of its overlay and every pointer and ' +
+    '<code>lui</code>/<code>addiu</code> pair repointed (the boot executable is in-place only), ' +
+    'and an overlay that no longer fits before the next file is moved to the end of the image. ' +
+    'Nothing is written until every file passes.',
+    [
+      {name: 'iso',  label: 'Retail ISO',        value: defaultIso,
+       pick: {mode: 'file', filter: 'iso'}},
+      {name: 'text', label: 'Edited strings dir', placeholder: 'the tree from Export strings',
+       pick: {mode: 'dir'}},
+      {name: 'retail', label: 'Unmodified ISO (when the target disc\'s overlays were already rewritten)',
+       placeholder: 'optional', pick: {mode: 'file', filter: 'iso'}},
+      {name: 'out',  label: 'Output ISO',        placeholder: 'path for the translated ISO copy'},
+      {name: 'grow', label: 'Move strings that outgrow their slot', type: 'checkbox', value: true},
+    ], 'Import strings'));
+
+  cards.appendChild(makeCard(9.27, 'statfont-scan', 'Battle screen font: 1. paint the letters',
+    'The battle HUD (command bars, "Drone M", the Ether and Items lists) draws with its own ' +
+    '10×18-cell grid inside <code>yamamoto\\stat\\stat.xtx</code>, not the dialogue font. This shapes ' +
+    'the words of a translated tree, gives each glyph one of the grid\'s 110 free cells, draws it ' +
+    'there from a TrueType font and writes the new sheet plus <code>statfont.json</code>. Look at ' +
+    'the <code>grid.png</code> it writes. Patch the sheet in with <em>Patch disc objects</em>.',
+    [
+      {name: 'iso',      label: 'Retail ISO', value: defaultIso, pick: {mode: 'file', filter: 'iso'}},
+      {name: 'text',     label: 'Translated tree', placeholder: 'ovl-export tree with the battle words translated',
+       pick: {mode: 'dir'}},
+      {name: 'font',     label: 'TrueType font', placeholder: 'e.g. NotoSansGeorgian-Regular.ttf', pick: {mode: 'file'}},
+      {name: 'script',   label: 'Script tag',  placeholder: 'Geor, Cyrl, Grek, Armn, …'},
+      {name: 'language', label: 'Language',    placeholder: 'ka, ru, el, hy, …'},
+      {name: 'px',       label: 'Letter size (px)', value: '13'},
+      {name: 'baseline', label: 'Baseline row (0-17)', value: '13'},
+      {name: 'rtl',      label: 'Right-to-left script', type: 'checkbox'},
+      {name: 'extend',   label: 'Earlier statfont.json to add to (optional)', pick: {mode: 'file'}},
+      {name: 'out',      label: 'Output dir', placeholder: 'directory for stat.xtx, statfont.json, grid.png',
+       pick: {mode: 'dir'}},
+    ], 'Paint cells'));
+
+  cards.appendChild(makeCard(9.28, 'statfont-encode', 'Battle screen font: 2. encode the battle words',
+    'Rewrites the translated battle strings as the <code>#XX</code> cell codes the HUD printer ' +
+    'understands. Then run <em>Import translated menu and battle words</em> on the result with ' +
+    '<em>Move strings</em> ticked (the codes are longer than the English).',
+    [
+      {name: 'text', label: 'Translated tree', placeholder: 'the same tree given to Paint cells', pick: {mode: 'dir'}},
+      {name: 'map',  label: 'statfont.json', placeholder: 'from Paint cells', pick: {mode: 'file'}},
+      {name: 'out',  label: 'Encoded tree', placeholder: 'directory for the #XX copy', pick: {mode: 'dir'}},
+    ], 'Encode battle words'));
+
   cards.appendChild(makeCard(9.3, 'lang-scan', 'Other scripts: 1. build the glyphs (Arabic, Hebrew, Hindi, …)',
     'For a translation into a script the disc\'s font never had. Shapes every string of the ' +
     'translated tree with HarfBuzz, collects the glyphs it uses, gives each a slot in the ' +
@@ -1643,6 +1790,16 @@ async function loadStatus() {
       {name: 'srt', label: 'Translated SRT', pick: {mode: 'file', filter: 'srt'}},
       {name: 'out', label: 'Subtitled movie to write', placeholder: 'e.g. movie.fr.pss'},
       {name: 'max_bytes', label: 'Max size (bytes)', placeholder: 'default: source file\'s own size'},
+      {name: 'font',     label: 'TrueType font (kit renders the cues; any script, no libass)',
+       placeholder: 'e.g. Kohinoor.ttc, NotoNaskhArabic.ttf', pick: {mode: 'file'}},
+      {name: 'face',     label: 'Face index (.ttc)', value: '0'},
+      {name: 'px',       label: 'Letter size (px)', value: '22'},
+      {name: 'script',   label: 'Script tag', placeholder: 'Deva, Arab, Hebr, …'},
+      {name: 'language', label: 'Language', placeholder: 'hi, ar, he, …'},
+      {name: 'rtl',      label: 'Right-to-left text', type: 'checkbox'},
+      {name: 'cues',     label: 'Hand-made cue PNGs (dir)', placeholder: 'cue0001.png … instead of a font',
+       pick: {mode: 'dir'}},
+      {name: 'mask',     label: 'Blur the original subtitle band (x,y,w,h or none)', value: '0,330,512,90'},
     ], 'Burn subtitles'));
 
   cards.appendChild(makeCard(13, 'layer1-list', 'Layer-1 movies: list',

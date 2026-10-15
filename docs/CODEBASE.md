@@ -224,6 +224,8 @@ Not wired into the GUI; run directly when digging:
 | build a new mod | `repack.py` (it's 188 lines), then `pinkhair.py` as the worked example |
 | translate the game | [MODDING.md](MODDING.md) §5, then `textpack.py` and `evttext.py` |
 | translate into another alphabet | [SCRIPTS.md](SCRIPTS.md), then `font.py` → `glyphs.py` → `langpack.py` |
+| translate menu and battle words | `ovltext.py` (the overlays), then [SCRIPTS.md](SCRIPTS.md) § 2b; battle bars: `statfont.py`, § 2c |
+| subtitle a movie in any script | [SUBTITLES.md](SUBTITLES.md), then `subs.py` (`CueRenderer`, `encode_es_overlay`) |
 | decompile cutscene logic | [JAVA.md](JAVA.md), then `evt.py` |
 | add a command end-to-end | [MODDING.md](MODDING.md) §7 (the four touch points) |
 | trust but verify | `cli.py cmd_verify`, plus the checklist in [MODDING.md](MODDING.md) §8 |
@@ -271,3 +273,33 @@ previews without the game.
 `repack.py` grew `grow=True` (append + repoint), `iso9660.py` the second
 volume, `chains.py` chain 2, `textpack.py` the `.uml` growth rules and
 EUC-JP.
+
+**`ovltext.py`** — the third text tree: the C strings inside the code
+overlays `OV01`-`OV12` and the boot ELF (tech names, "End", "Menu",
+item and skill descriptions, the field menu's labels). `Overlay` parses
+the ELF, finds every NUL-terminated string that something points at
+(32-bit words outside functions; `lui`/`addiu` pairs inside them, using
+the `.symtab` function ranges), and `apply` rewrites them: in place when
+they fit, else appended to the load segment with every reference
+repointed; `export_strings`/`import_strings` are the tree API. On the
+ISO side `repack.patch_fs_file` writes a root file back in place (and
+updates its directory record) and `repack.relocate_fs_file` appends it
+to the image when the next extent leaves no room; `iso9660.IsoFile`
+carries `record_off` for that.
+
+**`statfont.py`** — the battle HUD's font: the 25×10 grid of 10×18
+cells in `yamamoto\stat\stat.xtx` (XTX canvas in and out, the PSMT8
+swizzle both ways), the 230-byte lookup table, `CellRenderer` (HarfBuzz
+shaping + the outline filler at cell size, coverage mapped to the
+sheet's index ramp), `scan` (free cells + spare bytes per glyph),
+`encode` (strings as those bytes plus the rewritten table line for
+`ovl-import`).
+
+**`subs.py`** additions — `CueRenderer` draws an SRT cue as an outlined
+RGBA PNG through `glyphs.TTFRenderer` (HarfBuzz shaping, any script),
+`encode_es_overlay` composites the cues with ffmpeg's `overlay` filter
+and blurs the original subtitle band while a cue is up, and
+`detect_burned_in` finds when the original subtitle is on screen so
+`subs-template --detect` can write a timed skeleton. `burn` picks the
+overlay path whenever a font or a directory of cue PNGs is given, and
+needs no libass for it.

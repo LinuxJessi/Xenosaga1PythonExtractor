@@ -37,6 +37,7 @@ class IsoFile:
     size: int
     is_dir: bool
     layer: int = 0  # 0 = first volume, 1 = second (dual-layer) volume
+    record_off: int = 0  # byte offset of the directory record in the image
 
 
 class IsoImage:
@@ -88,7 +89,7 @@ class IsoImage:
             elen = struct.unpack_from("<I", d, i + 10)[0]
             is_dir = bool(d[i + 25] & 2)
             name = d[i + 33 : i + 33 + nl].decode("ascii", "replace").split(";")[0]
-            f = IsoFile(prefix + name, elba, elen, is_dir, layer)
+            f = IsoFile(prefix + name, elba, elen, is_dir, layer, lba * SECTOR + i)
             yield f
             if is_dir:
                 yield from self._walk(elba, elen, prefix + name + "\\", base, layer)

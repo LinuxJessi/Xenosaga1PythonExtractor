@@ -2,6 +2,71 @@
 
 Newest first: what changed, why, and what it means for you.
 
+## 2026-10-15 — menu and battle words, movie subtitles, more scripts on screen
+
+Two gaps the script pipeline still had, both closed and both seen
+running on PCSX2 from the LANGTEST disc; the mock-up pictures in
+SCRIPTS.md are replaced by captures.
+
+**The executables' strings.** Tech names, `End`, `Menu`, item and skill
+descriptions and the field menu's labels are C literals in the five
+code overlays (`OV01.OVL`…) and the boot ELF. `ovl-export` writes them
+as a third text tree (9,335 referenced strings on the USA disc, found
+through pointer words and `lui`/`addiu` pairs with the overlays' own
+symbol tables), `ovl-import` writes them back: in place when they fit,
+otherwise appended to the overlay's load segment with every reference
+repointed, the overlay going to the end of the image if its slot is
+full (`--grow`). The memory past the largest overlay is unused on this
+disc, which is what makes the append safe; the boot ELF has a bss after
+its data and stays in-place only. Georgian (Mkhedruli) tech names,
+seven of them relocated past the overlay's old end, are drawn by the
+battle bars. The approach follows poketony's XS1KOR, which moved
+overlay strings for the Korean disc.
+
+**Movies in any script without libass.** `subs-burn --font` renders each
+SRT cue itself — HarfBuzz shaping through the same code as the font
+step, white with a black outline — and composites it with ffmpeg's
+plain `overlay` filter, blurring the band that holds the burned-in
+English while a cue is up; `--cues DIR` takes hand-drawn PNGs instead.
+`subs-template --detect` times a skeleton from the original subtitle
+(white pixels with a dark outline next to them, sampled four times a
+second). The first Woglinde movie with ten Hindi cues plays in the game.
+This too is XS1KOR's plan (fixed rows, outline/shadow/dark spread,
+size-guarded re-encode over the untouched audio), re-done with filters
+every ffmpeg build has.
+
+**The battle screen's own font.** The command bars and HUD labels are
+not drawn with font0/font1 at all: OV01 keeps a 25-column grid of 10×18
+cells in the status sheet `yamamoto\stat\stat.xtx` and a 230-byte
+lookup table (digits, A–Z, a–z, four punctuation marks). Two-byte codes
+draw nothing there, which the first Georgian attempt showed as empty
+bars. `statfont scan` paints a translation's letters into the grid's
+110 free cells and gives each a byte the table lacks; `statfont encode`
+writes the battle strings with those bytes and the rewritten table (an
+overlay string like the others) into the tree `ovl-import` takes. KOS-
+MOS's tech bars read in Mkhedruli on PCSX2.
+
+**Movie timing, the hard way.** Two more things the first boot taught:
+the console's movie player needs a PTS/DTS on nearly every picture (the
+retail muxer stamps 1,455 of 1,495), and it reads the container by the
+sector, so packs must stay 16,384 bytes with 4,096-byte packets, with
+video delivered no more than about 0.3 s ahead of its decode time.
+`subs.splice` is now a small muxer that reproduces that shape and
+pacing from the original's own stamps; the earlier "omit the stamps"
+version hung the game on a black screen.
+
+**Hindi on screen.** The cold open's title, KOS-MOS's program menu,
+Allen's question and the Yes/No box, drawn by the game from Kohinoor
+Devanagari cells with conjuncts intact. One lesson: the dialogue box
+wraps a little under 400 px, so `--width 370` for the kit's own breaks.
+
+New: `ovl-export`, `ovl-import [--grow] [--retail]`, `statfont
+extract|scan|encode`, `subs-template --detect`,
+`subs-burn --font/--face/--px/--script/--language/--rtl/--cues/--mask/--bottom/--keep-cues`;
+GUI cards for the executable strings and the battle font;
+`repack.patch_fs_file` / `relocate_fs_file`; FORMATS.md § Code overlays
+and § The battle screen's font.
+
 ## 2026-10-15 — v1.2.0: the script pipeline, tested on the console
 
 Everything in the October notes below ships as **v1.2.0**: models and

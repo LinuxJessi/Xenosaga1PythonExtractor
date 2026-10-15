@@ -154,8 +154,9 @@ def probe(path, ffprobe: str = "ffprobe") -> dict:
         [ffprobe, "-v", "error", "-show_entries", "format=duration",
          "-of", "json", str(path)],
         capture_output=True, text=True, check=True).stdout)["format"]
+    frames = video_track_bytes(list(iter_packets(Path(path).read_bytes()))).count(b"\x00\x00\x01\x00")
     return {"width": v["width"], "height": v["height"], "fps": v["r_frame_rate"],
-            "duration": float(fmt["duration"])}
+            "duration": float(fmt["duration"]), "frames": frames}
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +168,18 @@ def _srt_timestamp(t: float) -> str:
     m, s = divmod(rem, 60)
     ms = round((s - int(s)) * 1000)
     return f"{int(h):02d}:{int(m):02d}:{int(s):02d},{ms:03d}"
+
+
+def write_srt_detected(src_pss, out_srt, ffmpeg: str = "ffmpeg", **kw) -> int:
+    """SRT skeleton timed from the burned-in subtitle: one empty cue per
+    interval the original text is on screen. Fill in the lines."""
+    segs = detect_burned_in(src_pss, ffmpeg=ffmpeg, **kw)
+    lines = []
+    for i, (a, b) in enumerate(segs, 1):
+        lines += [str(i), f"{_srt_timestamp(a)} --> {_srt_timestamp(b)}",
+                  f"[line {i}: what is said from {a:.2f}s to {b:.2f}s]", ""]
+    Path(out_srt).write_text("\n".join(lines), encoding="utf-8")
+    return len(segs)
 
 
 def write_srt_template(src_path, out_srt, cue_seconds: float = 5.0,
@@ -185,6 +198,286 @@ def write_srt_template(src_path, out_srt, cue_seconds: float = 5.0,
         t, n = end, n + 1
     Path(out_srt).write_text("\n".join(lines), encoding="utf-8")
     return n - 1
+
+
+# ---------------------------------------------------------------------------
+# Subtitles without libass: cues rendered by the kit, composited by ffmpeg
+# ---------------------------------------------------------------------------
+# The game's movies carry their English burned into the picture, so a new
+# language has to cover the old line and draw its own. XS1KOR (the Korean
+# localisation) did this with an ASS overlay at the game's 512x448: fixed
+# subtitle rows, outline + shadow + a dark "spread" behind the letters to
+# bury the original, rendered through ffmpeg/libass, then re-encoded as
+# MPEG-2 within the original's size and muxed over the untouched audio.
+# The same plan is followed here, but the text is rasterised by the kit
+# itself (HarfBuzz shaping + the outline filler from glyphs.py, so Arabic,
+# Devanagari, Hebrew… shape correctly) into one PNG per cue, and ffmpeg's
+# plain `overlay`/`boxblur` filters do the compositing. Those filters are in
+# every ffmpeg build; `subtitles`/`drawtext` are not. A directory of
+# hand-made PNGs (any image editor) works in place of the font.
+
+def _srt_time(s: str) -> float:
+    s = s.strip().replace(",", ".")
+    h, m, sec = s.split(":")
+    return int(h) * 3600 + int(m) * 60 + float(sec)
+
+
+def parse_srt(path) -> list:
+    """-> [(start_s, end_s, text)] with text lines joined by '\n'."""
+    cues = []
+    block: list = []
+    for raw in Path(path).read_text(encoding="utf-8-sig").splitlines() + [""]:
+        line = raw.rstrip("\r")
+        if line.strip():
+            block.append(line)
+            continue
+        if len(block) >= 2 and "-->" in block[1 if block[0].strip().isdigit() else 0]:
+            i = 1 if block[0].strip().isdigit() else 0
+            a, b = block[i].split("-->")
+            text = "\n".join(block[i + 1:]).strip()
+            if text:
+                cues.append((_srt_time(a), _srt_time(b.split()[0]), text))
+        block = []
+    return cues
+
+
+def _png_rgba(width: int, height: int, rows: list) -> bytes:
+    import zlib
+    from font import _png_chunk
+    raw = b"".join(b"\x00" + bytes(r) for r in rows)
+    return (b"\x89PNG\r\n\x1a\n"
+            + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+            + _png_chunk(b"IDAT", zlib.compress(raw, 9))
+            + _png_chunk(b"IEND", b""))
+
+
+class CueRenderer:
+    """Draw one subtitle cue (one or two lines) as a white, black-outlined
+    RGBA PNG the width of the frame, shaped with HarfBuzz."""
+
+    def __init__(self, font, px: float = 22.0, face_index: int = 0,
+                 script: Optional[str] = None, language: Optional[str] = None,
+                 rtl: bool = False, width: int = 512, outline: int = 2,
+                 shadow: int = 1, supersample: int = 3):
+        from glyphs import TTFRenderer
+        self.r = TTFRenderer(font, px=px, face_index=face_index,
+                             features=None, supersample=supersample)
+        # subtitles want the font's own ligatures and kerning back
+        self.r.features = {}
+        self.script, self.language, self.rtl = script, language, rtl
+        self.width, self.px = width, px
+        self.outline, self.shadow, self.ss = outline, shadow, supersample
+        self.line_h = int(round(px * 1.35))
+        asc = self.r.tt["hhea"].ascent * self.r.scale
+        self.ascent = int(round(min(asc, px * 1.1)))
+
+    def _coverage(self, text: str, W: int, H: int, baseline: int) -> list:
+        """Even-odd scanline fill of a shaped line, centred, 0..255 per pixel."""
+        ss = self.ss
+        r = self.r
+        glyphs = r.shape(text, "rtl" if self.rtl else "ltr", self.script, self.language)
+        total = sum(g[2] for g in glyphs) * r.scale
+        pen = max((W - total) / 2.0, 2.0)
+        edges = []
+        for gid, _, adv, xo, yo in glyphs:
+            for contour in r.contours(gid):
+                pts = [((pen + (xo + x) * r.scale) * ss,
+                        (baseline - (yo + y) * r.scale) * ss) for x, y in contour]
+                for i in range(len(pts)):
+                    x0, y0 = pts[i]
+                    x1, y1 = pts[(i + 1) % len(pts)]
+                    if y0 != y1:
+                        edges.append((x0, y0, x1, y1))
+            pen += adv * r.scale
+        cov = [[0] * W for _ in range(H)]
+        if not edges:
+            return cov
+        ys = sorted(set(range(int(max(0, min(min(e[1], e[3]) for e in edges))),
+                             int(min(H * ss, max(max(e[1], e[3]) for e in edges)) + 1))))
+        for sy in ys:
+            yc = sy + 0.5
+            xs = []
+            for x0, y0, x1, y1 in edges:
+                if (y0 <= yc < y1) or (y1 <= yc < y0):
+                    xs.append(x0 + (yc - y0) * (x1 - x0) / (y1 - y0))
+            xs.sort()
+            row = cov[sy // ss]
+            for i in range(0, len(xs) - 1, 2):
+                a, b = int(xs[i] + 0.5), int(xs[i + 1] + 0.5)
+                for sx in range(max(a, 0), min(b, W * ss)):
+                    row[sx // ss] += 1
+        n = ss * ss
+        return [[min(255, c * 255 // n) for c in row] for row in cov]
+
+    def render(self, text: str) -> tuple:
+        """-> (png_bytes, width, height) for a cue of 1..n lines."""
+        lines = [ln for ln in text.split("\n")] or [""]
+        W = self.width
+        pad = self.outline + self.shadow + 2
+        H = self.line_h * len(lines) + 2 * pad
+        text_cov = [[0] * W for _ in range(H)]
+        for i, ln in enumerate(lines):
+            if not ln.strip():
+                continue
+            base = pad + i * self.line_h + self.ascent
+            cov = self._coverage(ln, W, H, base)
+            for y in range(H):
+                tr, cr = text_cov[y], cov[y]
+                for x in range(W):
+                    if cr[x]:
+                        tr[x] = max(tr[x], cr[x])
+        # outline: max over a square neighbourhood; shadow: offset copy
+        o = self.outline
+        edge = [[0] * W for _ in range(H)]
+        for y in range(H):
+            for x in range(W):
+                m = 0
+                for dy in range(-o, o + 1):
+                    yy = y + dy
+                    if 0 <= yy < H:
+                        row = text_cov[yy]
+                        for dx in range(-o, o + 1):
+                            xx = x + dx
+                            if 0 <= xx < W and row[xx] > m:
+                                m = row[xx]
+                edge[y][x] = m
+        sh = self.shadow
+        rows = []
+        for y in range(H):
+            row = bytearray()
+            for x in range(W):
+                t = text_cov[y][x]
+                e = edge[y][x]
+                s = edge[y - sh][x - sh] if sh and y >= sh and x >= sh else 0
+                a = max(e, s * 3 // 4)
+                if t:
+                    # white letter over the black edge
+                    row += bytes((255, 255, 255, max(t, a)))
+                    continue
+                row += bytes((0, 0, 0, a))
+            rows.append(row)
+        return _png_rgba(W, H, rows), W, H
+
+
+def render_cues(cues, renderer: CueRenderer, out_dir) -> list:
+    """-> [(png_path, start, end)]; one PNG per cue, named by index."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = []
+    for i, (a, b, text) in enumerate(cues, 1):
+        png, _, _ = renderer.render(text)
+        p = out_dir / f"cue{i:04d}.png"
+        p.write_bytes(png)
+        out.append((p, a, b))
+    return out
+
+
+def load_cue_dir(cues, cue_dir) -> list:
+    """Hand-made PNGs: ``cue0001.png`` … matched to the SRT cues in order."""
+    cue_dir = Path(cue_dir)
+    out = []
+    for i, (a, b, _) in enumerate(cues, 1):
+        p = cue_dir / f"cue{i:04d}.png"
+        if not p.exists():
+            raise FileNotFoundError(f"{p} (one PNG per SRT cue, cue0001.png …)")
+        out.append((p, a, b))
+    return out
+
+
+def _enable(cues) -> str:
+    return "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in cues) or "0"
+
+
+def encode_es_overlay(src_pss, cue_pngs, out_es, ffmpeg: str = "ffmpeg",
+                      ffprobe: str = "ffprobe", bitrate_kbps: int = 1500,
+                      gop: int = 15, bframes: int = 2,
+                      mask: Optional[tuple] = (0, 330, 512, 90),
+                      bottom_margin: int = 28) -> dict:
+    """Like ``encode_es`` but composites the cue PNGs with ``overlay`` and,
+    while a cue is up, blurs the band that holds the original subtitle
+    (``mask`` = x, y, w, h; None to leave the picture alone)."""
+    info = probe(src_pss, ffprobe=ffprobe)
+    fps, dur = info["fps"], info["duration"]
+    W, H = info["width"], info["height"]
+    cmd = [ffmpeg, "-y", "-loglevel", "error", "-i", str(src_pss)]
+    for p, _, _ in cue_pngs:
+        cmd += ["-loop", "1", "-framerate", fps, "-t", f"{dur:.3f}", "-i", str(p)]
+    parts = []
+    cur = "[0:v]"
+    if mask and cue_pngs:
+        x, y, w, h = mask
+        parts.append(f"{cur}split[base][forblur]")
+        parts.append(f"[forblur]crop={w}:{h}:{x}:{y},boxblur=luma_radius=10:luma_power=2:"
+                     f"chroma_radius=5:chroma_power=2[blur]")
+        parts.append(f"[base][blur]overlay={x}:{y}:enable='{_enable([(a, b) for _, a, b in cue_pngs])}'[v0]")
+        cur = "[v0]"
+    for i, (_, a, b) in enumerate(cue_pngs, 1):
+        nxt = f"[v{i}]"
+        parts.append(f"{cur}[{i}:v]overlay=(W-w)/2:H-h-{bottom_margin}:"
+                     f"enable='between(t,{a:.3f},{b:.3f})'{nxt}")
+        cur = nxt
+    parts.append(f"{cur}format=yuv420p[out]")
+    cmd += ["-filter_complex", ";".join(parts), "-map", "[out]", "-an",
+            "-c:v", "mpeg2video", "-profile:v", "main", "-level:v", "main",
+            "-r", fps, "-s", f"{W}x{H}",
+            "-g", str(gop), "-bf", str(bframes), "-flags", "+cgop",
+            "-sc_threshold", "1000000000",
+            "-b:v", f"{bitrate_kbps}k", "-maxrate", f"{bitrate_kbps}k",
+            "-minrate", f"{bitrate_kbps}k", "-bufsize", f"{max(bitrate_kbps * 3 // 10, 100)}k",
+           "-rc_init_occupancy", f"{max(bitrate_kbps * 3 // 10, 100) * 1000 // 2}",
+            "-frames:v", str(info["frames"]),
+            "-f", "mpeg2video", str(out_es)]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode:
+        raise RuntimeError(f"ffmpeg failed:\n{r.stderr[-2000:]}")
+    return info
+
+
+def detect_burned_in(src_pss, ffmpeg: str = "ffmpeg", band: tuple = (0, 330, 512, 90),
+                     step: float = 0.25, min_pixels: int = 120,
+                     min_len: float = 0.6, gap: float = 0.3) -> list:
+    """Find when the original burned-in subtitle is on screen: sample the
+    band every ``step`` seconds as grey PNGs and count near-white pixels.
+    -> [(start, end)] merged over gaps shorter than ``gap``."""
+    from font import png_to_gray
+    x, y, w, h = band
+    with tempfile.TemporaryDirectory() as td:
+        pattern = str(Path(td) / "%05d.png")
+        cmd = [ffmpeg, "-y", "-loglevel", "error", "-i", str(src_pss),
+               "-vf", f"fps={1 / step},crop={w}:{h}:{x}:{y},format=gray", pattern]
+        subprocess.run(cmd, check=True, capture_output=True)
+        frames = sorted(Path(td).glob("*.png"))
+        counts = []
+        for f in frames:
+            fw, fh, g = png_to_gray(f.read_bytes())
+            # subtitle letters are white with a dark outline: count bright
+            # pixels that have a dark pixel within two steps, which a bright
+            # floor or sky does not
+            n = 0
+            for yy in range(2, fh - 2):
+                row = yy * fw
+                for xx in range(2, fw - 2):
+                    if g[row + xx] > 235 and (
+                            g[row + xx - 2] < 70 or g[row + xx + 2] < 70
+                            or g[row - 2 * fw + xx] < 70 or g[row + 2 * fw + xx] < 70):
+                        n += 1
+            counts.append(n)
+    segs = []
+    on = None
+    for i, c in enumerate(counts + [0]):
+        t = i * step
+        if c >= min_pixels and on is None:
+            on = t
+        elif c < min_pixels and on is not None:
+            segs.append([on, t])
+            on = None
+    merged: list = []
+    for a, b in segs:
+        if merged and a - merged[-1][1] < gap:
+            merged[-1][1] = b
+        else:
+            merged.append([a, b])
+    return [(a, b) for a, b in merged if b - a >= min_len]
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +508,8 @@ def encode_es(src_pss, srt_path, out_es, ffmpeg: str = "ffmpeg",
            # exactly `gop`, matching the source's fixed 15/3 structure
            "-sc_threshold", "1000000000",
            "-b:v", f"{bitrate_kbps}k", "-maxrate", f"{bitrate_kbps}k",
-           "-minrate", f"{bitrate_kbps}k", "-bufsize", f"{bitrate_kbps * 2}k",
+           "-minrate", f"{bitrate_kbps}k", "-bufsize", f"{max(bitrate_kbps * 3 // 10, 100)}k",
+           "-rc_init_occupancy", f"{max(bitrate_kbps * 3 // 10, 100) * 1000 // 2}",
            "-f", "mpeg2video", str(out_es)]
     subprocess.run(cmd, check=True, capture_output=True)
     return info
@@ -223,7 +517,7 @@ def encode_es(src_pss, srt_path, out_es, ffmpeg: str = "ffmpeg",
 
 def fit_to_budget(src_pss, srt_path, out_es, max_bytes: int,
                   ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe",
-                  attempts: int = 6) -> dict:
+                  attempts: int = 6, encoder=None) -> dict:
     """Encode repeatedly, backing off the bitrate, until the raw ES fits
     under ``max_bytes``. The ES will grow further once re-packetized into
     PES (a few bytes of header per ~64 KB), so this targets a safety margin
@@ -232,8 +526,11 @@ def fit_to_budget(src_pss, srt_path, out_es, max_bytes: int,
     bitrate = max(int(max_bytes * 8 / duration / 1000 * 0.85), 200)
     size = None
     for attempt in range(1, attempts + 1):
-        encode_es(src_pss, srt_path, out_es, ffmpeg=ffmpeg, ffprobe=ffprobe,
-                 bitrate_kbps=bitrate)
+        if encoder is not None:
+            encoder(bitrate)
+        else:
+            encode_es(src_pss, srt_path, out_es, ffmpeg=ffmpeg, ffprobe=ffprobe,
+                      bitrate_kbps=bitrate)
         size = Path(out_es).stat().st_size
         if size <= max_bytes:
             return {"bitrate_kbps": bitrate, "size": size, "attempts": attempt}
@@ -247,91 +544,350 @@ def fit_to_budget(src_pss, srt_path, out_es, max_bytes: int,
 # Splice: swap only the video track, keep every other packet byte-identical
 # ---------------------------------------------------------------------------
 
-def splice(orig_path, new_es_path, out_path) -> dict:
-    """Replace the video elementary stream inside ``orig_path`` with
-    ``new_es_path``'s content; every pack/system/audio/padding packet is
-    copied verbatim, in its original position and order.
+def _pes_times(raw: bytes):
+    """(pts, dts) of a PES packet, either may be None."""
+    flags2, hlen = raw[7], raw[8]
+    def ts(b):
+        return ((b[0] >> 1) & 7) << 30 | b[1] << 22 | (b[2] >> 1) << 15 | b[3] << 7 | b[4] >> 1
+    pts = ts(raw[9:14]) if flags2 & 0x80 else None
+    dts = ts(raw[14:19]) if flags2 & 0x40 else None
+    return pts, dts
 
-    The new ES is cut into as many chunks as the original had video
-    packets, sized in proportion to each original packet's payload length
-    (bigger original packets — I-frames — get proportionally bigger new
-    chunks too), so the video/audio interleave cadence approximates the
-    original's rather than dumping all new video up front. This is a
-    best-effort approximation, not a byte-exact timing model — the disc's
-    own packets carry no per-packet PTS/DTS beyond an initial anchor, so
-    there is no finer-grained ground truth to match against. Verify sync
-    on a real movie before trusting a batch of these (docs/SUBTITLES.md).
-    """
+
+def _ts_bytes(prefix: int, t: int) -> bytes:
+    return bytes(((prefix << 4) | ((t >> 29) & 0x0E) | 1,
+                  (t >> 22) & 0xFF, ((t >> 14) & 0xFE) | 1,
+                  (t >> 7) & 0xFF, ((t << 1) & 0xFE) | 1))
+
+
+def _pes(payload: bytes, pts=None, dts=None) -> bytes:
+    if pts is None:
+        hdr = b"\x80\x00\x00"
+    elif dts is None or dts == pts:
+        hdr = b"\x80\x80\x05" + _ts_bytes(2, pts)
+    else:
+        hdr = b"\x80\xC0\x0A" + _ts_bytes(3, pts) + _ts_bytes(1, dts)
+    return b"\x00\x00\x01\xe0" + struct.pack(">H", len(hdr) + len(payload)) + hdr + payload
+
+
+def picture_units(es: bytes) -> list:
+    """Split an MPEG-2 ES into (offset, temporal_ref, gop_start) per picture;
+    each unit starts at the sequence/GOP header that precedes its picture,
+    if any, so a PES packet can begin there."""
+    starts = []
+    pending = None
+    i = 0
+    while True:
+        j = es.find(b"\x00\x00\x01", i)
+        if j < 0 or j + 5 >= len(es):
+            break
+        code = es[j + 3]
+        if code in (0xB3, 0xB8):                 # sequence / GOP header
+            if pending is None:
+                pending = j
+        if code == 0x00:                         # picture start
+            tref = (es[j + 4] << 2) | (es[j + 5] >> 6)
+            starts.append([pending if pending is not None else j, tref, False])
+            pending = None
+        i = j + 3
+    # mark GOP starts: a unit whose span holds a GOP or sequence header
+    for k, u in enumerate(starts):
+        nxt = starts[k + 1][0] if k + 1 < len(starts) else len(es)
+        head = es[u[0]:min(nxt, u[0] + 64)]
+        u[2] = b"\x00\x00\x01\xb8" in head or b"\x00\x00\x01\xb3" in head
+    return [tuple(u) for u in starts]
+
+
+def picture_times(units, first_pts: int, first_dts: int, frame_ticks: int) -> list:
+    """PTS/DTS per picture in decode order: DTS counts up one frame per
+    picture; PTS = the GOP's display base + temporal reference. Open GOPs
+    (an I frame with leading B frames) are handled by the temporal
+    reference alone, as the standard defines it."""
+    out = []
+    gop_base = first_pts
+    gop_len = 0
+    for n, (_, tref, gop_start) in enumerate(units):
+        if gop_start and n:
+            gop_base += gop_len * frame_ticks
+            gop_len = 0
+        dts = first_dts + n * frame_ticks
+        pts = gop_base + tref * frame_ticks
+        out.append((pts, dts))
+        gop_len += 1
+    return out
+
+
+MAX_VIDEO_LEAD = 0.35     # seconds a picture may be delivered ahead of its decode time
+SCR_DELAY = 4500          # 90 kHz ticks between a pack's clock and the earliest unit in it
+
+
+def pack_scr(raw: bytes) -> int:
+    """The 90 kHz system clock reference of an MPEG-2 pack header."""
+    b = raw[4:10]
+    return (((b[0] >> 3) & 7) << 30 | (b[0] & 3) << 28 | b[1] << 20
+            | (b[2] >> 3) << 15 | (b[2] & 3) << 13 | b[3] << 5 | b[4] >> 3)
+
+
+def _pack_groups(packets):
+    """Group packets by pack: [(pack_packet, [members…]), …]."""
+    groups = []
+    for p in packets:
+        if p["kind"] == "pack":
+            groups.append((p, []))
+        elif groups:
+            groups[-1][1].append(p)
+    return groups
+
+
+def video_capacity(orig_path) -> dict:
+    """How many elementary-stream bytes the original container's video
+    slots can hold once every picture carries a PTS/DTS stamp."""
     orig = Path(orig_path).read_bytes()
-    new_es = Path(new_es_path).read_bytes()
     packets = list(iter_packets(orig))
     video = [p for p in packets if p["kind"] == "video"]
-    if not video:
+    pictures = video_track_bytes(packets).count(b"\x00\x00\x01\x00")
+    slots = sum(p["end"] - p["start"] - 9 for p in video)
+    return {"slots": len(video), "pictures": pictures,
+            "es_bytes": slots - 10 * pictures - 16}
+
+
+def _scr_bytes(template: bytes, scr: int) -> bytes:
+    """A 14-byte MPEG-2 pack header with ``scr`` (90 kHz base, extension 0)
+    and the template's mux rate / stuffing bytes."""
+    b4 = 0x40 | ((scr >> 30) & 7) << 3 | 0x04 | ((scr >> 28) & 3)
+    b5 = (scr >> 20) & 0xFF
+    b6 = ((scr >> 15) & 0x1F) << 3 | 0x04 | ((scr >> 13) & 3)
+    b7 = (scr >> 5) & 0xFF
+    b8 = (scr & 0x1F) << 3 | 0x04
+    b9 = 0x01
+    return template[:4] + bytes((b4, b5, b6, b7, b8, b9)) + template[10:14]
+
+
+def splice(orig_path, new_es_path, out_path) -> dict:
+    """Mux ``new_es_path`` with the original's audio into a container shaped
+    like the original: 16,384-byte packs of 4,096-byte PES packets.
+
+    The console's player reads packs by the sector and schedules by the
+    stamps, so the shape has to be exact and the timing has to be the
+    retail muxer's: every audio packet is the original's bytes, placed
+    when its PTS comes within 0.2 s of the pack clock; video is placed
+    when the picture under the cursor is within 0.3 s of its decode time
+    (the retail stream never delivers a picture earlier than that, nor
+    late), each PES packet carrying the PTS/DTS of the first picture that
+    starts in it; a slot nothing is due for holds padding; each pack's
+    clock is written as the earliest stamp it carries minus one frame,
+    never decreasing, as measured on the retail stream. The system
+    header is copied; the stream ends with sequence_end and the program
+    end code. Pictures still delivered late (the encode burst past what
+    the slots can carry) are counted in the report; ``burn`` re-encodes
+    lower until there are none.
+    """
+    orig = Path(orig_path).read_bytes()
+    new_es = Path(new_es_path).read_bytes().rstrip(b"\x00")
+    if not new_es.endswith(b"\x00\x00\x01\xb7"):
+        new_es += b"\x00\x00\x01\xb7"
+    packets = list(iter_packets(orig))
+    video = [p for p in packets if p["kind"] == "video"]
+    audio = [p for p in packets if p["kind"] == "audio"]
+    packs = [p for p in packets if p["kind"] == "pack"]
+    system = [p for p in packets if p["kind"] == "system"]
+    if not video or not packs:
         raise ValueError(f"{orig_path}: no video packets found")
+    pack_size = packs[1]["start"] - packs[0]["start"] if len(packs) > 1 else 16384
+    pack_hdr = packs[0]["raw"][:14]
+    sys_hdr = system[0]["raw"] if system else b""
+    slot = 4096
 
     orig_frames = video_track_bytes(packets).count(b"\x00\x00\x01\x00")
-    new_frames = new_es.count(b"\x00\x00\x01\x00")
-    if orig_frames != new_frames:
+    units = picture_units(new_es)
+    if orig_frames != len(units):
         raise ValueError(
             f"{orig_path}: frame count changed ({orig_frames} -> "
-            f"{new_frames}) — the carried-over PTS/DTS timestamps would no "
-            "longer describe the right timeline. Re-encode at the exact "
-            "source fps/duration (check encode_es's -r matches probe())")
+            f"{len(units)}) — re-encode at the exact source fps/duration "
+            "(check encode_es's -r matches probe())")
+    stamped = [t for t in (_pes_times(p["raw"]) for p in video) if t[0] is not None]
+    first_pts = stamped[0][0]
+    first_dts = stamped[0][1] if stamped[0][1] is not None else first_pts
+    dtss = [d for _, d in stamped if d is not None]
+    frame_ticks = 3003
+    if len(dtss) >= 2:
+        deltas = sorted(b - a for a, b in zip(dtss, dtss[1:]) if b > a)
+        if deltas:
+            med = deltas[len(deltas) // 2]
+            frame_ticks = med // max(1, round(med / 3003))
+    times = picture_times(units, first_pts, first_dts, frame_ticks)
+    unit_offsets = [u[0] for u in units]
+    unit_at = {u[0]: t for u, t in zip(units, times)}
 
-    weights = [p["payload_end"] - p["payload_start"] for p in video]
-    total_w = sum(weights)
-    bounds = [0]
-    acc = 0
-    for w in weights:
-        acc += w
-        bounds.append(round(len(new_es) * acc / total_w))
-    bounds[-1] = len(new_es)  # rounding must not drop trailing bytes
-    chunks = [new_es[bounds[i]:bounds[i + 1]] for i in range(len(weights))]
+    import bisect
+    first_scr, last_scr = pack_scr(packs[0]["raw"]), pack_scr(packs[-1]["raw"])
+    byte_rate = len(orig) * 90000 / max(1, last_scr - first_scr)   # bytes per 90 kHz tick
+    audio_q = [(_pes_times(p["raw"])[0], p["raw"]) for p in audio]
+    a_lead, v_lead = int(0.2 * 90000), int(MAX_VIDEO_LEAD * 90000)
+    max_packs = len(packs) + (len(orig) - packs[-1]["start"] - pack_size) // pack_size
 
     out = bytearray()
-    vi = 0
-    for p in packets:
-        if p["kind"] != "video":
-            out += p["raw"]
-            continue
-        chunk = chunks[vi]
-        vi += 1
-        # No PTS/DTS on any rebuilt packet — tried carrying the original
-        # packet's timestamp bytes through (same frame count/fps as the
-        # source, so the values are numerically still valid *if* they land
-        # on the same decode-order frame), and it produced non-monotonic
-        # DTS when tested: ~2.8 PES packets cover each frame here, so
-        # proportional-by-byte-size re-splitting doesn't put a "PTS slot"
-        # on the same frame it originally described. Omitting timestamps
-        # entirely is spec-legal (decoders fall back to deriving timing
-        # from the frame-rate) and is the version that round-tripped
-        # through ffmpeg with zero warnings in testing.
-        pieces = ([chunk[j:j + _MAX_PES_PAYLOAD]
-                   for j in range(0, len(chunk), _MAX_PES_PAYLOAD)]
-                  or [b""])  # keep the slot even if this chunk landed empty
-        for sub in pieces:
-            out += (b"\x00\x00\x01\xe0"
-                    + struct.pack(">H", 3 + len(sub))
-                    + b"\x80\x00\x00" + sub)
-
+    cursor, ai, prev_scr = 0, 0, first_scr
+    late = stamped_pictures = padding_slots = 0
+    worst_late = 0
+    k = 0
+    # the clock is the last pack's SCR: time advances with the stamps the
+    # packs carry (the retail stream steps 0, 1 or 2 frames per pack), and
+    # by one frame when a pack has nothing due and holds only padding
+    clock = first_scr
+    while cursor < len(new_es) or ai < len(audio_q):
+        if k >= max_packs:
+            raise ValueError(
+                f"{orig_path}: the new video does not fit the container at this pace "
+                f"({len(new_es) - cursor} bytes and {len(audio_q) - ai} audio packets "
+                "left) — encode at a lower bitrate")
+        body = bytearray(sys_hdr if k == 0 else b"")
+        stamps = []
+        has_video = False
+        room = pack_size - 14 - len(body)
+        while room > 0:
+            size = min(slot, room)
+            # interleave by time: whichever stream's next unit is due first
+            # goes in the slot (audio: its PTS; video: the decode time of
+            # the picture under the cursor), the way a muxer orders access
+            # units. Audio packets are 4,096 bytes and skip a shorter slot.
+            vid_due = times[bisect.bisect_right(unit_offsets, cursor) - 1][1] if cursor < len(new_es) else None
+            aud_due = audio_q[ai][0] if ai < len(audio_q) else None
+            take_audio = (aud_due is not None and len(audio_q[ai][1]) <= size
+                          and (vid_due is None or aud_due <= vid_due))
+            if take_audio:
+                body += audio_q[ai][1]
+                stamps.append(audio_q[ai][0])
+                ai += 1
+                room -= len(audio_q[ai - 1][1])
+                continue
+            if cursor < len(new_es):
+                hdr = 9
+                pts = dts = None
+                for _ in range(3):
+                    span_end = cursor + (size - hdr)
+                    j = bisect.bisect_left(unit_offsets, cursor)
+                    if j < len(unit_offsets) and unit_offsets[j] < span_end:
+                        pts, dts = unit_at[unit_offsets[j]]
+                        want = 14 if dts == pts else 19
+                    else:
+                        pts = dts = None
+                        want = 9
+                    if want == hdr:
+                        break
+                    hdr = want
+                j = bisect.bisect_left(unit_offsets, cursor)
+                if not (j < len(unit_offsets) and unit_offsets[j] < cursor + (size - hdr)):
+                    pts = dts = None
+                    hdr = 9
+                payload = new_es[cursor:cursor + (size - hdr)]
+                if len(payload) < size - hdr:
+                    tail = size - hdr - len(payload)
+                    if tail >= 6:
+                        body += _pes(payload, pts, dts)
+                        body += b"\x00\x00\x01\xbe" + struct.pack(">H", tail - 6) + b"\xff" * (tail - 6)
+                    else:
+                        body += _pes_stuffed(payload, pts, dts, tail)
+                else:
+                    body += _pes(payload, pts, dts)
+                if pts is not None:
+                    stamped_pictures += 1
+                    stamps.append(dts if dts is not None else pts)
+                has_video = True
+                cursor += len(payload)
+                room -= size
+                continue
+            body += b"\x00\x00\x01\xbe" + struct.pack(">H", size - 6) + b"\xff" * (size - 6)
+            padding_slots += 1
+            room -= size
+        if stamps:
+            # the pack clock sits ~0.05 s before the earliest unit it carries
+            # (retail: 0.02-0.09 s); a pack whose content was due before the
+            # previous pack's clock is late, which the caller treats as a
+            # bitrate problem
+            scr = max(min(stamps) - SCR_DELAY, prev_scr)
+            if min(stamps) < prev_scr:
+                late += 1
+                worst_late = max(worst_late, prev_scr - min(stamps))
+        elif has_video:
+            scr = prev_scr                      # continuation of a picture: no time passes
+        else:
+            scr = prev_scr + frame_ticks        # nothing due: let a frame of time pass
+        out += _scr_bytes(pack_hdr, scr) + body
+        prev_scr = clock = scr
+        k += 1
+    out += b"\x00\x00\x01\xb9"
     Path(out_path).write_bytes(out)
-    return {"orig_size": len(orig), "new_size": len(out),
-            "video_packets": len(video), "orig_es_bytes": total_w,
-            "new_es_bytes": len(new_es)}
+    return {"orig_size": len(orig), "new_size": len(out), "packs": k,
+            "video_packets": len(video), "new_es_bytes": len(new_es),
+            "pictures": len(units), "stamped": stamped_pictures,
+            "padding_slots": padding_slots, "late": late,
+            "worst_late_s": round(worst_late / 90000, 3), "frame_ticks": frame_ticks}
+
+
+def _pes_stuffed(payload: bytes, pts, dts, extra: int) -> bytes:
+    """A video PES packet with ``extra`` 0xFF stuffing bytes in its header."""
+    if pts is None:
+        hdr = bytes((0x80, 0x00, extra)) + b"\xff" * extra
+    elif dts is None or dts == pts:
+        hdr = bytes((0x80, 0x80, 5 + extra)) + _ts_bytes(2, pts) + b"\xff" * extra
+    else:
+        hdr = bytes((0x80, 0xC0, 10 + extra)) + _ts_bytes(3, pts) + _ts_bytes(1, dts) + b"\xff" * extra
+    return b"\x00\x00\x01\xe0" + struct.pack(">H", len(hdr) + len(payload)) + hdr + payload
 
 
 def burn(src_pss, srt_path, out_path, ffmpeg: str = "ffmpeg",
-        ffprobe: str = "ffprobe", max_bytes: Optional[int] = None) -> dict:
+        ffprobe: str = "ffprobe", max_bytes: Optional[int] = None,
+        renderer: Optional[CueRenderer] = None, cue_dir=None,
+        mask: Optional[tuple] = (0, 330, 512, 90), bottom_margin: int = 28,
+        keep_cues=None) -> dict:
     """End to end: encode the subtitled video within budget, splice it back
-    over the original's video track, original audio untouched throughout."""
+    over the original's video track, original audio untouched throughout.
+
+    With ``renderer`` (a font) or ``cue_dir`` (hand-made PNGs) the cues are
+    composited by ffmpeg's ``overlay`` and the original subtitle band is
+    blurred while a cue is up (``mask``); otherwise the libass ``subtitles``
+    filter is used as before."""
     src_pss, out_path = Path(src_pss), Path(out_path)
     if max_bytes is None:
         max_bytes = src_pss.stat().st_size
+    # the container keeps its exact size; what must fit is the elementary
+    # stream inside the original's video slots
+    es_budget = video_capacity(src_pss)["es_bytes"]
     with tempfile.TemporaryDirectory() as td:
         es_path = Path(td) / "subbed.m2v"
-        fit_report = fit_to_budget(src_pss, srt_path, es_path, max_bytes,
-                                   ffmpeg=ffmpeg, ffprobe=ffprobe)
-        splice_report = splice(src_pss, es_path, out_path)
+        encoder = None
+        if renderer is not None or cue_dir is not None:
+            cues = parse_srt(srt_path)
+            png_dir = Path(keep_cues) if keep_cues else Path(td) / "cues"
+            pngs = (load_cue_dir(cues, cue_dir) if cue_dir is not None
+                    else render_cues(cues, renderer, png_dir))
+
+            def encoder(bitrate, _pngs=pngs):
+                encode_es_overlay(src_pss, _pngs, es_path, ffmpeg=ffmpeg, ffprobe=ffprobe,
+                                  bitrate_kbps=bitrate, mask=mask, bottom_margin=bottom_margin)
+        fit_report = fit_to_budget(src_pss, srt_path, es_path, es_budget,
+                                   ffmpeg=ffmpeg, ffprobe=ffprobe, encoder=encoder)
+        bitrate = fit_report["bitrate_kbps"]
+        for attempt in range(6):
+            try:
+                splice_report = splice(src_pss, es_path, out_path)
+            except ValueError as e:
+                if "lower bitrate" not in str(e):
+                    raise
+                splice_report = {"late": 1, "new_size": 0}
+            if not splice_report["late"] and splice_report["new_size"] <= max_bytes:
+                break
+            bitrate = int(bitrate * 0.88)
+            if encoder is not None:
+                encoder(bitrate)
+            else:
+                encode_es(src_pss, srt_path, es_path, ffmpeg=ffmpeg, ffprobe=ffprobe,
+                          bitrate_kbps=bitrate)
+            fit_report = {**fit_report, "bitrate_kbps": bitrate, "attempts": fit_report["attempts"] + attempt + 1}
+        else:
+            raise RuntimeError(f"{out_path}: could not pace the video inside the container "
+                               f"even at {bitrate} kbps")
     if splice_report["new_size"] > max_bytes:
         raise RuntimeError(
             f"{out_path}: spliced size {splice_report['new_size']} still "

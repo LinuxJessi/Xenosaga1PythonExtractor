@@ -722,3 +722,58 @@ ceiling is 4,173,824, about 78 MB of growth before it stops being
 burnable (emulators do not care). The idea of relocating instead of
 rebuilding is XS1KOR's; the append placement is this kit's, forced by the
 packed layout.
+
+## Code overlays `OV01`-`OV12` and the strings in them (`ovltext.py`)
+
+Five plain ELF files at the disc root, loaded by `xglCdLoadOverlay` with
+`sceSifLoadElf("cdrom0:\OVnn.OVL;1")` into one shared region: `OV01`
+(field and battle, 0xA00000-0xA5B8F8, one `PT_LOAD`, no bss), `OV02`,
+`OV10`, `OV12` at 0x9FF000 and `OV11` at 0xA00000, each shorter than
+OV01. Each keeps its `.symtab` (1,081 sized functions in OV01). The
+boot ELF's bss ends at 0x99D910, and 0xA5B8F8-0xA80000 reads as zero on
+the running game with OV01 loaded, so an overlay may grow at the end of
+its load segment.
+
+Battle and menu words are C literals in these files: OV01 holds the tech
+names (`NEEDLE`, `BLASTER`…, pointed at from the `btst` table), `End`,
+`Menu`, `Ether List`, `Items List`, every item/skill description; the
+boot ELF holds the field menu's `Skills / Ether / Items`. Strings are
+referenced two ways: 32-bit pointer words in data, and `lui`/`addiu`
+pairs in code (a `lui` is often shared by several addresses, and the
+`addiu` may sit in a branch arm far from it). `ovltext.Overlay` lists
+only strings that have at least one reference (2,614 in OV01, 9,335 in
+all six files) and rewrites them: in place when the new bytes fit up to
+the next non-zero byte, otherwise appended to the load segment with
+`p_filesz`/`p_memsz`, the section size and `e_shoff` adjusted and every
+reference repointed; a shared `lui` whose high half would have to change
+blocks the move and is reported instead. On the ISO the overlay is
+written back in place when the next extent leaves room (870 bytes after
+OV01) or appended to the image with its directory record's extent and
+length repointed (`repack.relocate_fs_file`). Verified on PCSX2: seven
+OV01 strings moved to 0xA5B8F8+ and drawn by the battle menu.
+
+## The battle screen's font (`statfont.py`)
+
+The battle HUD does not use font0/font1. OV01's `menuFontPut` draws from
+a 25-column grid of **10×18-pixel cells** inside the status sheet
+`yamamoto\stat\stat.xtx` (first sub-image, 384×128 CT32 = 768×256 as
+PSMT8; the grid's cell 0 is at PSMT8 x=512, y=0; TEX0 is set up by
+`menuFontEnvMake` as PSMT8, buffer width 16, 1024×256). The glyph for a
+byte is `menuFontIdxGet`: index of the byte in a 230-byte table
+`" 0123456789A-Za-z"` + 84 spaces + `.` (147) + `'` (152) + `/` (175) +
+`-` (195); bytes with bit 7 set go to `menuDFontIdxGet`, a 2-byte table
+whose matches draw cells 175+ (`／ 　 ・ ＾` and a few more); and the
+sequence `#XX` (two hex digits, read with `sscanf("%X")`) draws cell
+`XX` directly. Cells 63–174 except the four punctuation marks (110
+cells) hold accented Latin no USA byte reaches. Cell pixels use index 4
+for the solid stroke and 5–15 as anti-aliasing shades (0 = clear).
+`statfont scan` paints new glyphs into those free cells and gives each a
+byte the table lacks (the 28 printable punctuation marks it does not
+list, then the control range minus tab/LF/CR: 56 bytes); `statfont
+encode` writes the strings with those bytes and emits the rewritten
+table as the `@a46af8` line of the overlay tree (the table is a
+NUL-terminated string the code points at, so `ovl-import` writes it in
+place). The HUD centres a label by its byte count, which is why the
+`#XX` escape (`encode --escape`, three bytes a letter) draws the right
+glyphs but starts the label too far left. `srcRow` passed to
+`menuStatSprite` is unused; the cell's (x, y) is the UV.

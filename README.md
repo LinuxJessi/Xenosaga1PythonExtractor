@@ -30,8 +30,14 @@ The kit ships no game data. You need your own copy of the disc.
   shaped, wrapped and right-to-left where it should be. Two scripts can
   share one font pair (`--extend`), mixed-script words keep their Latin
   halves, and the disc's own symbols and control codes pass through.
-  Seen running on PCSX2: an Arabic dialogue line and an Amharic mail,
-  drawn by the game itself from the rebuilt fonts.
+  Menu and battle words, which live as C strings in the code overlays,
+  are a third tree (`ovl-export` / `ovl-import`, any length), and the
+  battle screen's own bitmap font gets new letters with `statfont`. Movie
+  subtitles are rendered by the kit in any script and burned over the
+  blurred English with plain ffmpeg (`subs-burn --font`), timed from the
+  original with `subs-template --detect`. All of it seen running on
+  PCSX2, drawn by the game itself: Hindi dialogue and menus, Georgian
+  battle bars, a Hindi movie subtitle, an Arabic line, an Amharic mail.
   [docs/SCRIPTS.md](docs/SCRIPTS.md). Several of the formats behind this
   were first worked out by poketony for the Korean localisation
   [XS1KOR](https://github.com/poketony/XS1KOR).

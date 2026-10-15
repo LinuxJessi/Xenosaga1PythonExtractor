@@ -106,18 +106,23 @@ need WP-3 (class rewriter + FL00 rebuilder). Key facts making WP-3 tractable:
   the same-length ASCII experiments can't distinguish these. See WP-3
   acceptance test.)
 
-### Tier C — engine/menu text: **in the ELF and overlays**
-Menu labels, battle UI, item/skill names. Not yet inventoried. The ELF is
-unstripped and statically linked; strings are findable with `strings`/graph
-xrefs. Editing: same-length in place is trivial; longer strings need
-pointer repointing inside the ELF (static binary — pointers are absolute
-EE addresses in `.data`, patchable once found). Bounded by WP-5.
+### Tier C — engine/menu text: **in the ELF and overlays** — done (2026-10-15)
+Menu labels, battle UI, item/skill names: 9,335 referenced strings in
+the boot ELF and the five overlays, exported and imported by
+`ovl-export` / `ovl-import` (`ovltext.py`). Overlay strings may be any
+length (appended to the overlay, pointers and `lui`/`addiu` pairs
+repointed; the overlay relocated on the image if it outgrows its slot);
+boot-ELF strings are in place only. Battle tech names in Georgian were
+drawn by the game from relocated strings on the LANGTEST disc. The
+inventory part of WP-5 is therefore the export itself.
 
 ### Tier D — text baked into textures & video
 Location cards, menu art (XTX — format cracked, repack pipeline exists,
 **12-copy disc sweep required** for shared textures, see xenotool notes);
-pre-rendered `.pss` movies in `out/dump/layer1/` may carry burned-in
-English. Inventory in WP-5; re-authoring is art work, not engine work.
+pre-rendered `.pss` movies carry burned-in English; `subs-burn --font`
+covers the English band and draws a shaped Arabic (or any) line over it,
+and `subs-template --detect` times the cues from the original
+(SUBTITLES.md). Textures with baked text remain art work.
 
 ---
 

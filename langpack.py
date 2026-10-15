@@ -453,7 +453,7 @@ def _iter_tree(tree: Path):
 def _transform_file(path: Path, fn) -> str:
     with open(path, encoding="utf-8-sig", newline="") as fh:   # keep \r as a control byte
         text = fh.read()
-    if text.startswith("# evttext"):
+    if text.startswith(("# evttext", "# ovltext")):
         from evttext import _escape, _unescape
         out = []
         for line in text.split("\n"):

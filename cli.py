@@ -336,6 +336,24 @@ def cmd_evt_import(args) -> int:
     return import_dialogue(args.iso, args.text, args.out, args.grow)
 
 
+def cmd_ovl_export(args) -> int:
+    from ovltext import export_strings
+
+    return export_strings(args.iso, args.out)
+
+
+def cmd_ovl_import(args) -> int:
+    from ovltext import import_strings
+
+    return import_strings(args.iso, args.text, args.out, args.grow, args.retail)
+
+
+def cmd_statfont(args) -> int:
+    from statfont import main as statfont_main
+
+    return statfont_main([args.statfont_cmd, *args.rest])
+
+
 def cmd_font_extract(args) -> int:
     import font
     from repack import read_entry
@@ -369,6 +387,11 @@ def cmd_subs_template(args) -> int:
     if not ffprobe:
         print("error: ffprobe not found (need ffmpeg installed)", file=sys.stderr)
         return 2
+    if args.detect:
+        n = subs.write_srt_detected(args.src, args.out, ffmpeg=detect_ffmpeg())
+        print(f"wrote {n} cues timed from the burned-in subtitle to {args.out} "
+              "— fill in each line, then run subs-burn", file=sys.stderr)
+        return 0
     n = subs.write_srt_template(args.src, args.out,
                                 cue_seconds=args.cue_seconds or 5.0,
                                 ffprobe=ffprobe)
@@ -387,9 +410,28 @@ def cmd_subs_burn(args) -> int:
         print("error: ffmpeg not found", file=sys.stderr)
         return 2
     ffprobe = subs.detect_ffprobe(ffmpeg)
+    renderer = None
+    if args.font:
+        try:
+            renderer = subs.CueRenderer(args.font, px=args.px, face_index=args.face,
+                                        script=args.script, language=args.language,
+                                        rtl=args.rtl)
+        except Exception as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+    mask = None
+    if args.mask != "none":
+        try:
+            mask = tuple(int(v) for v in args.mask.split(","))
+            assert len(mask) == 4
+        except (ValueError, AssertionError):
+            print("error: --mask wants x,y,w,h or none", file=sys.stderr)
+            return 2
     try:
         report = subs.burn(args.src, args.srt, args.out, ffmpeg=ffmpeg,
-                           ffprobe=ffprobe, max_bytes=args.max_bytes)
+                           ffprobe=ffprobe, max_bytes=args.max_bytes,
+                           renderer=renderer, cue_dir=args.cues, mask=mask,
+                           bottom_margin=args.bottom, keep_cues=args.keep_cues)
     except (RuntimeError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -494,9 +536,12 @@ def main() -> int:
                      ("text-import", cmd_text_import),
                      ("evt-export", cmd_evt_export),
                      ("evt-import", cmd_evt_import),
+                     ("ovl-export", cmd_ovl_export),
+                     ("ovl-import", cmd_ovl_import),
                      ("font-extract", cmd_font_extract),
                      ("font-rebuild", cmd_font_rebuild),
                      ("lang", cmd_lang),
+                     ("statfont", cmd_statfont),
                      ("subs-template", cmd_subs_template),
                      ("subs-burn", cmd_subs_burn),
                      ("layer1-list", cmd_layer1_list),
@@ -508,6 +553,13 @@ def main() -> int:
                            help="extracted dump directory (cli.py extract output)")
             p.add_argument("--out", required=True)
             p.set_defaults(fn=cmd_music_export)
+            continue
+        if name == "statfont":
+            p.add_argument("statfont_cmd", choices=("extract", "scan", "encode"),
+                           help="battle-font step; remaining options go to it "
+                                "(python statfont.py <step> -h)")
+            p.add_argument("rest", nargs=argparse.REMAINDER)
+            p.set_defaults(fn=fn)
             continue
         if name == "lang":
             p.add_argument("lang_cmd", choices=("scan", "encode", "preview"),
@@ -567,6 +619,19 @@ def main() -> int:
             p.add_argument("--out", required=True, help="patched ISO to write")
             p.add_argument("--grow", action="store_true",
                            help="relocate containers that outgrow their allocation")
+        if name == "ovl-export":
+            p.add_argument("--out", required=True,
+                           help="directory for the executable-strings tree (menus, battle)")
+        if name == "ovl-import":
+            p.add_argument("--text", required=True,
+                           help="edited executable-strings tree (from ovl-export)")
+            p.add_argument("--out", required=True, help="patched ISO to write")
+            p.add_argument("--grow", action="store_true",
+                           help="move strings that outgrow their slot to the end of "
+                                "the overlay, and the overlay to the end of the image "
+                                "if the next file leaves no room")
+            p.add_argument("--retail", help="unmodified ISO to take the executables from "
+                                            "(import again into an already-patched disc)")
         if name == "font-extract":
             p.add_argument("--out", required=True,
                            help="directory for font0/font1 .tex, sheet PNGs, metrics CSV")
@@ -581,6 +646,9 @@ def main() -> int:
             p.add_argument("--cue-seconds", type=float,
                            help="uniform cue length (default 5s) — a rough "
                                 "starting point, retime by hand")
+            p.add_argument("--detect", action="store_true",
+                           help="time the cues from the burned-in subtitle "
+                                "instead (one cue per interval it is on screen)")
         if name == "subs-burn":
             p.add_argument("--src", required=True, help="source .pss movie")
             p.add_argument("--srt", required=True, help="translated, timed SRT")
@@ -590,6 +658,22 @@ def main() -> int:
                            help="size ceiling (default: source file's own "
                                 "size — the allocation for a TOC movie or "
                                 "layer-1 slot is never larger than that)")
+            p.add_argument("--font", help="TrueType/OpenType font: render the cues with "
+                                          "the kit (HarfBuzz shaping, any script) instead "
+                                          "of libass")
+            p.add_argument("--face", type=int, default=0, help="face index in a .ttc")
+            p.add_argument("--px", type=float, default=22.0, help="letter size in pixels")
+            p.add_argument("--script", help="HarfBuzz script tag (Deva, Arab, …)")
+            p.add_argument("--language", help="BCP-47 language (hi, ar, …)")
+            p.add_argument("--rtl", action="store_true", help="right-to-left text")
+            p.add_argument("--cues", help="directory of hand-made cue PNGs "
+                                          "(cue0001.png … one per SRT cue)")
+            p.add_argument("--mask", default="0,330,512,90",
+                           help="band to blur while a cue is up, x,y,w,h "
+                                "(the original subtitle's place); 'none' to skip")
+            p.add_argument("--bottom", type=int, default=28,
+                           help="pixels between the cue and the bottom edge")
+            p.add_argument("--keep-cues", help="also write the rendered cue PNGs here")
         if name == "layer1-patch":
             p.add_argument("--out", required=True, help="patched ISO to write")
             p.add_argument("--index", type=int, help="movie index (see layer1-list)")

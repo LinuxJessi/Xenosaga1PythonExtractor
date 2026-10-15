@@ -257,6 +257,88 @@ def patch_iso(iso_path: str | Path,
     return reports
 
 
+def fs_allocation(iso: IsoImage, name: str) -> int:
+    """Bytes available to an ISO9660 file before the next extent starts."""
+    f = iso.files[name]
+    later = [g.lba for g in iso.files.values()
+             if g.layer == f.layer and g.lba > f.lba]
+    end = min(later) * SECTOR if later else iso.volume_end
+    return end - f.lba * SECTOR
+
+
+def patch_fs_file(iso_path: str | Path, name: str, data: bytes,
+                  verbose: bool = True) -> None:
+    """Replace a plain ISO9660 file (the boot ELF, an ``.OVL`` overlay, an
+    IOP module) **in place**. The new content must fit before the next
+    extent; the directory record's length is updated so the console's
+    filesystem reads the new size. Work on a copy."""
+    iso = IsoImage(iso_path)
+    try:
+        f = iso.files[name]
+        alloc = fs_allocation(iso, name)
+        if len(data) > alloc:
+            raise RepackError(f"{name}: new size {len(data)} exceeds the "
+                              f"{alloc} bytes before the next file")
+        with open(iso.path, "r+b") as fh:
+            mm = mmap.mmap(fh.fileno(), 0)
+            start = f.lba * SECTOR
+            mm[start:start + len(data)] = data
+            if len(data) < f.size:          # clear the stale tail
+                mm[start + len(data):start + f.size] = bytes(f.size - len(data))
+            r = f.record_off
+            mm[r + 10:r + 14] = struct.pack("<I", len(data))
+            mm[r + 14:r + 18] = struct.pack(">I", len(data))
+            if bytes(mm[start:start + len(data)]) != data:
+                raise RepackError(f"{name}: read-back mismatch")
+            mm.flush()
+            mm.close()
+        if verbose:
+            print(f"patched {name}: {f.size} -> {len(data)} bytes (allocation {alloc})")
+    finally:
+        iso.close()
+
+
+def relocate_fs_file(iso_path: str | Path, name: str, data: bytes,
+                     verbose: bool = True) -> int:
+    """Append a plain ISO9660 file's new content after the last sector of the
+    image and repoint its directory record there (extent + length). The
+    console's filesystem follows the record, so the place does not matter;
+    the volume-space count is bumped as for grown TOC objects. Returns the
+    new LBA. Work on a copy."""
+    iso = IsoImage(iso_path)
+    try:
+        f = iso.files[name]
+        image_size = iso.image_size
+        if image_size % SECTOR:
+            raise RepackError("image size is not a multiple of 2048")
+        sectors = (len(data) + SECTOR - 1) // SECTOR
+        new_lba = image_size // SECTOR
+        if new_lba + sectors > DVD9_SECTORS and verbose:
+            print(f"warning: image now {new_lba + sectors} sectors, beyond the "
+                  f"DVD-9 ceiling of {DVD9_SECTORS}; fine for emulators, not burnable")
+        with open(iso.path, "r+b") as fh:
+            fh.truncate(image_size + sectors * SECTOR)
+            mm = mmap.mmap(fh.fileno(), 0)
+            start = new_lba * SECTOR
+            mm[start:start + len(data)] = data
+            r = f.record_off
+            rec_lba = new_lba - (iso.layer2_base if f.layer else 0)
+            mm[r + 2:r + 6] = struct.pack("<I", rec_lba)
+            mm[r + 6:r + 10] = struct.pack(">I", rec_lba)
+            mm[r + 10:r + 14] = struct.pack("<I", len(data))
+            mm[r + 14:r + 18] = struct.pack(">I", len(data))
+            _bump_volume(mm, iso, sectors)
+            if bytes(mm[start:start + len(data)]) != data:
+                raise RepackError(f"{name}: read-back mismatch")
+            mm.flush()
+            mm.close()
+        if verbose:
+            print(f"patched {name}: {f.size} -> {len(data)} bytes, relocated to sector {new_lba}")
+        return new_lba
+    finally:
+        iso.close()
+
+
 def _bump_volume(mm: mmap.mmap, iso: IsoImage, sectors: int) -> None:
     """Grow the volume-space count of the volume that ends the image."""
     pvd_sector = iso.layer2_pvd_sector if iso.layer2_pvd_sector is not None else 16
