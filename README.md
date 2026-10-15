@@ -15,6 +15,13 @@ The kit ships no game data. You need your own copy of the disc.
 
 ![KOS-MOS as exported, then posed in Blender through the armature the kit builds from the game's skeleton files](docs/images/kosmos-posed.png)
 
+The game running from a disc the kit rebuilt, captured in PCSX2 (nothing composited):
+
+| | |
+|---|---|
+| ![Hindi: KOS-MOS confirming the battle program, drawn by the game from a rebuilt font](docs/images/ingame-hindi-program-set.png) | ![Hindi: a subtitle the kit burned into the first movie, on a black bar over the English](docs/images/ingame-hindi-movie.png) |
+| ![Georgian (Mkhedruli): KOS-MOS's command bars in the battle screen's own font](docs/images/ingame-georgian-battle.png) | ![Arabic: the cold-open line, joined and right-to-left](docs/images/ingame-arabic-cold-open.png) |
+
 ## What's new (October 2026)
 
 * **Translation without length limits.** Cutscene and field dialogue now
