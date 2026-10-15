@@ -33,8 +33,8 @@ The kit ships no game data. You need your own copy of the disc.
   Menu and battle words, which live as C strings in the code overlays,
   are a third tree (`ovl-export` / `ovl-import`, any length), and the
   battle screen's own bitmap font gets new letters with `statfont`. Movie
-  subtitles are rendered by the kit in any script and burned over the
-  blurred English with plain ffmpeg (`subs-burn --font`), timed from the
+  subtitles are rendered by the kit in any script and burned on a black
+  bar over the English with plain ffmpeg (`subs-burn --font`), timed from the
   original with `subs-template --detect`. All of it seen running on
   PCSX2, drawn by the game itself: Hindi dialogue and menus, Georgian
   battle bars, a Hindi movie subtitle, an Arabic line, an Amharic mail.

@@ -493,6 +493,12 @@ def build_subs_burn(form):
     mask = _str(form, "mask")
     if mask:
         args += ["--mask", mask]
+    band = _str(form, "band")
+    if band:
+        args += ["--band", band]
+    pad = _str(form, "band_pad")
+    if pad:
+        args += ["--band-pad", pad]
     return args
 
 
@@ -1799,7 +1805,9 @@ async function loadStatus() {
       {name: 'rtl',      label: 'Right-to-left text', type: 'checkbox'},
       {name: 'cues',     label: 'Hand-made cue PNGs (dir)', placeholder: 'cue0001.png … instead of a font',
        pick: {mode: 'dir'}},
-      {name: 'mask',     label: 'Blur the original subtitle band (x,y,w,h or none)', value: '0,330,512,90'},
+      {name: 'mask',     label: 'Cover the original subtitle band (x,y,w,h or none)', value: '0,330,512,118'},
+      {name: 'band',     label: 'Cover it with (black or blur)', value: 'black'},
+      {name: 'band_pad', label: 'Cover opens/closes this many seconds around each cue', value: '0.25'},
     ], 'Burn subtitles'));
 
   cards.appendChild(makeCard(13, 'layer1-list', 'Layer-1 movies: list',

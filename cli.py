@@ -431,7 +431,8 @@ def cmd_subs_burn(args) -> int:
         report = subs.burn(args.src, args.srt, args.out, ffmpeg=ffmpeg,
                            ffprobe=ffprobe, max_bytes=args.max_bytes,
                            renderer=renderer, cue_dir=args.cues, mask=mask,
-                           bottom_margin=args.bottom, keep_cues=args.keep_cues)
+                           bottom_margin=args.bottom, keep_cues=args.keep_cues,
+                           band=args.band, band_pad=args.band_pad)
     except (RuntimeError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -668,9 +669,17 @@ def main() -> int:
             p.add_argument("--rtl", action="store_true", help="right-to-left text")
             p.add_argument("--cues", help="directory of hand-made cue PNGs "
                                           "(cue0001.png … one per SRT cue)")
-            p.add_argument("--mask", default="0,330,512,90",
-                           help="band to blur while a cue is up, x,y,w,h "
+            p.add_argument("--mask", default="0,330,512,118",
+                           help="band to cover while a cue is up, x,y,w,h "
                                 "(the original subtitle's place); 'none' to skip")
+            p.add_argument("--band", default="black", choices=("black", "blur"),
+                           help="how the band is covered: a solid black bar "
+                                "(default; hides the English outright and costs "
+                                "the encoder nothing) or a box blur")
+            p.add_argument("--band-pad", type=float, default=0.25,
+                           help="seconds the cover opens before each cue and "
+                                "closes after it (the original line's own fade "
+                                "is rarely inside the SRT times)")
             p.add_argument("--bottom", type=int, default=28,
                            help="pixels between the cue and the bottom edge")
             p.add_argument("--keep-cues", help="also write the rendered cue PNGs here")

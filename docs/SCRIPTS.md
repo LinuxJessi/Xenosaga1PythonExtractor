@@ -31,13 +31,14 @@ mock-ups; they are gone.)
 | ![Hindi: the Encephalon cold open's first box](images/ingame-hindi-cold-open.png) | ![Hindi: KOS-MOS's program menu](images/ingame-hindi-menu.png) |
 | ![Hindi: Allen's question, wrapped by the kit](images/ingame-hindi-question.png) | ![Hindi: the Yes/No box](images/ingame-hindi-yesno.png) |
 | ![Arabic: the cold-open line, joined and right-to-left](images/ingame-arabic-cold-open.png) | ![Amharic: a U.M.N. mail body](images/ingame-amharic-mail.png) |
-| ![Georgian (Mkhedruli): battle command bars from the overlay strings](images/ingame-georgian-battle.png) | ![Hindi: a subtitle burned into the first movie, the English blurred under it](images/ingame-hindi-movie.png) |
+| ![Georgian (Mkhedruli): battle command bars from the overlay strings](images/ingame-georgian-battle.png) | ![Hindi: a subtitle burned into the first movie on a black bar over the English](images/ingame-hindi-movie.png) |
+| ![Hindi: KOS-MOS confirming the battle program](images/ingame-hindi-program-set.png) | ![Hindi: a later cue of the same movie](images/ingame-hindi-movie-2.png) |
 
 Dialogue, menus and the battle bars go through the game's font, exactly
 as `encode` emits them. Movies are different: they carry their English
-**burned into the picture**, so `subs-burn` blurs that band while a cue
-is up and draws the new line over it, rendered by the kit from any
-TrueType font (§ 4b).
+**burned into the picture**, so `subs-burn` covers that band with a
+black bar while a cue is up and draws the new line on it, rendered by
+the kit from any TrueType font (§ 4b).
 
 ## 1. Export the text
 
@@ -235,7 +236,10 @@ stray cues in the noisy opening shot, and one pair of short lines
 merged — look over the times before you write). `subs-burn --font`
 renders each cue with the same HarfBuzz shaping as the font step, white
 with a black outline, and composites it with ffmpeg's `overlay`; the
-band at `--mask 0,330,512,90` is blurred while a cue is up. No font and
+band at `--mask 0,330,512,118` (the bottom of the frame) is covered
+with a black bar while a cue is up (`--band blur` for a blur instead;
+the bar hides the English outright and costs the encoder nothing, so
+the rest of the picture keeps its bits). No font and
 no HarfBuzz? Draw the cues in any image editor as `cue0001.png`,
 `cue0002.png`… and pass `--cues DIR`. Arabic and Hebrew take `--rtl`.
 Details and what is and is not verified: [SUBTITLES.md](SUBTITLES.md).
@@ -304,13 +308,14 @@ python cli.py patch --iso LANGTEST.iso --out LANGTEST.iso \
     --set chain0:font0.tex=tr/font-am/font0.tex --set chain0:font1.tex=tr/font-am/font1.tex
 
 # ---- second day: Hindi dialogue, Georgian battle words, a Hindi movie ----
-# 5. Hindi: seven lines of ST0210 on the path to the first battle (title,
-#    KOS-MOS's question, the four-item program menu, Allen's confirmation, Yes/No)
+# 5. Hindi: all fourteen lines of ST0210 on the path to the first battle (title,
+#    Allen's explanations, KOS-MOS's question, the four-item program menu, "target
+#    input complete", "battle program has been set", "changing targets", Yes/No)
 #    tr/hi/chain0/scene/ST0210.evt.txt   @3.244z "आभासी प्रशिक्षण", @3.315z "सामान्य हमले\nटेक हमले\n…", @3.330z "हाँ\nनहीं" …
 python cli.py lang scan --font0 tr/font-am/font0.tex --font1 tr/font-am/font1.tex \
     --extend tr/font-am/glyphset.json --text tr/hi --font Kohinoor.ttc --face 0 \
     --script Deva --language hi --px 17 --baseline 16 --out tr/font-hi
-#    -> 70 distinct glyphs: 61 more proportional slots, 9 wide cells (conjuncts over 18 px)
+#    -> with all fourteen lines: the proportional block fills (161 slots), 35 wide cells (conjuncts over 18 px)
 python cli.py lang encode --text tr/hi --glyphset tr/font-hi/glyphset.json --out tr/hi-enc --width 370
 
 # 6. Georgian: the battle words, from the executable-strings tree
@@ -323,13 +328,15 @@ python cli.py lang scan --font0 tr/font-hi/font0.tex --font1 tr/font-hi/font1.te
 #    -> 22 Mkhedruli glyphs; the proportional block is now full (161 of 161), the last 12 in wide cells
 python cli.py lang encode --text tr/ka --glyphset tr/font-ka/glyphset.json --out tr/ka-enc
 
-# 7. the first movie (Shion and Allen in the lab, ten lines), Hindi cues over the blurred English
+# 7. the first movie (Shion and Allen in the lab, ten lines), Hindi cues on a black bar over the English
 python cli.py extract --iso GAME.iso --chain 1 --glob 'movie*1001_1*' --out tr/mov --no-carve
 python cli.py subs-template --src tr/mov/dump/chain1/movie/mpeg2/1001_1.pss --out tr/1001_1.hi.srt --detect
-#    … fill the ten cues …
+#    … check the times against the picture (the detector put two stray cues in the
+#    noisy opening shot, and Allen's 0.6 s "Hmm..." at 12.7 is easy to miss), fill the
+#    ten cues: 07.2-12.0 "एलन, दृश्य क्षेत्र के कनेक्शन में…", 12.7-13.3 "हम्म…", …
 python cli.py subs-burn --src tr/mov/dump/chain1/movie/mpeg2/1001_1.pss --srt tr/1001_1.hi.srt \
     --out tr/1001_1.hi.pss --font Kohinoor.ttc --face 0 --px 22 --script Deva --language hi
-#    -> 19,921,499 bytes (was 20,004,868), 2,728 kbps, first attempt
+#    -> 19,398,660 bytes in the 20,004,868-byte slot, 2,619 kbps (95 % of the video slots), first attempt
 
 # 8. into the disc
 python cli.py evt-import --iso LANGTEST.iso --text tr/hi-enc --out LANGTEST.iso --grow
@@ -410,9 +417,19 @@ day's additions:**
 * **Hindi dialogue**: every line on the path to the first battle, with
   conjuncts (क्ष, द्ध, प्र) drawn as single cells. The engine's own wrap
   of the long lines sits a little under 400 px, hence `--width 370`.
-* **The movie**: the lab scene plays with ten Hindi cues over the
-  blurred English and the original audio, and the game goes on to the
-  next scene. The first two builds did not: without a PTS/DTS on nearly
+  The first day's tree had seven of the fourteen lines, so "Battle
+  program has been set." and the others still came up in English; the
+  second import covers all of them.
+* **The movie**: the lab scene plays with ten Hindi cues on a black bar
+  over the English and the original audio, and the game goes on to the
+  next scene. The bar replaced a blur of the band: the blur left a soft
+  smear where the English had been, and the first encode (a tight rate
+  buffer) was visibly blocky; now the band is solid black, the encoder
+  spends the full slot on the picture (SUBTITLES.md, "Picture
+  quality"). The bar opens a quarter second before each cue and closes
+  a quarter second after (`--band-pad`): with the bar cut exactly to the
+  SRT times, the English fade-in showed for two or three frames at
+  several cue edges in the capture. The first two builds did not play at all: without a PTS/DTS on nearly
   every picture the player sat on a black frame and read to the end of
   the disc, and with the stamps but the packs drifted off 16 KB the
   player raised "A seek error has occurred". The muxer in `subs.splice`

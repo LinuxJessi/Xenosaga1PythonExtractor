@@ -391,11 +391,20 @@ def _enable(cues) -> str:
 def encode_es_overlay(src_pss, cue_pngs, out_es, ffmpeg: str = "ffmpeg",
                       ffprobe: str = "ffprobe", bitrate_kbps: int = 1500,
                       gop: int = 15, bframes: int = 2,
-                      mask: Optional[tuple] = (0, 330, 512, 90),
-                      bottom_margin: int = 28) -> dict:
+                      mask: Optional[tuple] = (0, 330, 512, 118),
+                      bottom_margin: int = 28, band: str = "black",
+                      band_pad: float = 0.25) -> dict:
     """Like ``encode_es`` but composites the cue PNGs with ``overlay`` and,
-    while a cue is up, blurs the band that holds the original subtitle
-    (``mask`` = x, y, w, h; None to leave the picture alone)."""
+    while a cue is up, covers the band that holds the original subtitle
+    (``mask`` = x, y, w, h; None to leave the picture alone): ``band`` is
+    ``"black"`` for a solid bar (the default: it hides the English
+    completely, costs the encoder nothing and leaves the rest of the
+    picture its bits) or ``"blur"`` for a box blur of the band. The cover
+    opens ``band_pad`` seconds before each cue and closes that long after
+    it: SRT times are rarely closer than a few frames to the original
+    line's own fade-in and fade-out, and a bar that is a few frames
+    early hides nothing worth seeing, while one that is late shows the
+    English."""
     info = probe(src_pss, ffprobe=ffprobe)
     fps, dur = info["fps"], info["duration"]
     W, H = info["width"], info["height"]
@@ -404,12 +413,18 @@ def encode_es_overlay(src_pss, cue_pngs, out_es, ffmpeg: str = "ffmpeg",
         cmd += ["-loop", "1", "-framerate", fps, "-t", f"{dur:.3f}", "-i", str(p)]
     parts = []
     cur = "[0:v]"
-    if mask and cue_pngs:
+    if mask and cue_pngs and band != "none":
         x, y, w, h = mask
-        parts.append(f"{cur}split[base][forblur]")
-        parts.append(f"[forblur]crop={w}:{h}:{x}:{y},boxblur=luma_radius=10:luma_power=2:"
-                     f"chroma_radius=5:chroma_power=2[blur]")
-        parts.append(f"[base][blur]overlay={x}:{y}:enable='{_enable([(a, b) for _, a, b in cue_pngs])}'[v0]")
+        on = _enable([(max(a - band_pad, 0.0), b + band_pad) for _, a, b in cue_pngs])
+        if band == "blur":
+            parts.append(f"{cur}split[base][forblur]")
+            parts.append(f"[forblur]crop={w}:{h}:{x}:{y},boxblur=luma_radius=10:luma_power=2:"
+                         f"chroma_radius=5:chroma_power=2[blur]")
+            parts.append(f"[base][blur]overlay={x}:{y}:enable='{on}'[v0]")
+        elif band == "black":
+            parts.append(f"{cur}drawbox=x={x}:y={y}:w={w}:h={h}:color=black:t=fill:enable='{on}'[v0]")
+        else:
+            raise ValueError(f"band must be 'black', 'blur' or 'none', not {band!r}")
         cur = "[v0]"
     for i, (_, a, b) in enumerate(cue_pngs, 1):
         nxt = f"[v{i}]"
@@ -420,11 +435,7 @@ def encode_es_overlay(src_pss, cue_pngs, out_es, ffmpeg: str = "ffmpeg",
     cmd += ["-filter_complex", ";".join(parts), "-map", "[out]", "-an",
             "-c:v", "mpeg2video", "-profile:v", "main", "-level:v", "main",
             "-r", fps, "-s", f"{W}x{H}",
-            "-g", str(gop), "-bf", str(bframes), "-flags", "+cgop",
-            "-sc_threshold", "1000000000",
-            "-b:v", f"{bitrate_kbps}k", "-maxrate", f"{bitrate_kbps}k",
-            "-minrate", f"{bitrate_kbps}k", "-bufsize", f"{max(bitrate_kbps * 3 // 10, 100)}k",
-           "-rc_init_occupancy", f"{max(bitrate_kbps * 3 // 10, 100) * 1000 // 2}",
+            *_quality_args(bitrate_kbps, gop, bframes),
             "-frames:v", str(info["frames"]),
             "-f", "mpeg2video", str(out_es)]
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -433,7 +444,7 @@ def encode_es_overlay(src_pss, cue_pngs, out_es, ffmpeg: str = "ffmpeg",
     return info
 
 
-def detect_burned_in(src_pss, ffmpeg: str = "ffmpeg", band: tuple = (0, 330, 512, 90),
+def detect_burned_in(src_pss, ffmpeg: str = "ffmpeg", band: tuple = (0, 330, 512, 118),
                      step: float = 0.25, min_pixels: int = 120,
                      min_len: float = 0.6, gap: float = 0.3) -> list:
     """Find when the original burned-in subtitle is on screen: sample the
@@ -485,6 +496,21 @@ def detect_burned_in(src_pss, ffmpeg: str = "ffmpeg", band: tuple = (0, 330, 512
 # parameters, as a raw MPEG-2 elementary stream (no PS container yet)
 # ---------------------------------------------------------------------------
 
+# MPEG-2 encoder settings shared by both paths. The retail streams run about
+# 2.7 Mbit/s with pictures up to 80 KB; a VBV of the Main Level maximum lets
+# the encoder spend that on an I frame, rate-distortion macroblock decisions
+# and trellis quantisation buy about a decibel at the same rate. A tight
+# VBV (an early version used 0.3 x bitrate) starved scene changes into
+# macroblocks; ffmpeg's two-pass mode refuses constant-rate streams, so
+# this stays single-pass.
+def _quality_args(bitrate_kbps: int, gop: int, bframes: int) -> list:
+    return ["-g", str(gop), "-bf", str(bframes), "-flags", "+cgop",
+            "-sc_threshold", "1000000000",
+            "-b:v", f"{bitrate_kbps}k", "-maxrate", f"{bitrate_kbps}k",
+            "-minrate", f"{bitrate_kbps}k", "-bufsize", "1835k",
+            "-mbd", "rd", "-trellis", "2", "-dc", "10", "-cmp", "2", "-subcmp", "2"]
+
+
 def encode_es(src_pss, srt_path, out_es, ffmpeg: str = "ffmpeg",
              ffprobe: str = "ffprobe", bitrate_kbps: int = 1500,
              gop: int = 15, bframes: int = 2) -> dict:
@@ -501,15 +527,7 @@ def encode_es(src_pss, srt_path, out_es, ffmpeg: str = "ffmpeg",
            "-c:v", "mpeg2video", "-profile:v", "main", "-level:v", "main",
            "-r", info["fps"], "-s", f"{info['width']}x{info['height']}",
            "-pix_fmt", "yuv420p",
-           "-g", str(gop), "-bf", str(bframes), "-flags", "+cgop",
-           # scene-change-triggered GOP breaks are incompatible with closed
-           # GOP in ffmpeg's mpeg2video encoder ("not supported yet") unless
-           # the threshold is pushed out of reach — this keeps GOP length
-           # exactly `gop`, matching the source's fixed 15/3 structure
-           "-sc_threshold", "1000000000",
-           "-b:v", f"{bitrate_kbps}k", "-maxrate", f"{bitrate_kbps}k",
-           "-minrate", f"{bitrate_kbps}k", "-bufsize", f"{max(bitrate_kbps * 3 // 10, 100)}k",
-           "-rc_init_occupancy", f"{max(bitrate_kbps * 3 // 10, 100) * 1000 // 2}",
+           *_quality_args(bitrate_kbps, gop, bframes),
            "-f", "mpeg2video", str(out_es)]
     subprocess.run(cmd, check=True, capture_output=True)
     return info
@@ -523,7 +541,7 @@ def fit_to_budget(src_pss, srt_path, out_es, max_bytes: int,
     PES (a few bytes of header per ~64 KB), so this targets a safety margin
     rather than the exact ceiling."""
     duration = probe(src_pss, ffprobe=ffprobe)["duration"]
-    bitrate = max(int(max_bytes * 8 / duration / 1000 * 0.85), 200)
+    bitrate = max(int(max_bytes * 8 / duration / 1000 * 0.95), 200)
     size = None
     for attempt in range(1, attempts + 1):
         if encoder is not None:
@@ -839,15 +857,15 @@ def _pes_stuffed(payload: bytes, pts, dts, extra: int) -> bytes:
 def burn(src_pss, srt_path, out_path, ffmpeg: str = "ffmpeg",
         ffprobe: str = "ffprobe", max_bytes: Optional[int] = None,
         renderer: Optional[CueRenderer] = None, cue_dir=None,
-        mask: Optional[tuple] = (0, 330, 512, 90), bottom_margin: int = 28,
-        keep_cues=None) -> dict:
+        mask: Optional[tuple] = (0, 330, 512, 118), bottom_margin: int = 28,
+        keep_cues=None, band: str = "black", band_pad: float = 0.25) -> dict:
     """End to end: encode the subtitled video within budget, splice it back
     over the original's video track, original audio untouched throughout.
 
     With ``renderer`` (a font) or ``cue_dir`` (hand-made PNGs) the cues are
     composited by ffmpeg's ``overlay`` and the original subtitle band is
-    blurred while a cue is up (``mask``); otherwise the libass ``subtitles``
-    filter is used as before."""
+    covered while a cue is up (``mask``; ``band`` = "black" bar or "blur");
+    otherwise the libass ``subtitles`` filter is used as before."""
     src_pss, out_path = Path(src_pss), Path(out_path)
     if max_bytes is None:
         max_bytes = src_pss.stat().st_size
@@ -865,7 +883,8 @@ def burn(src_pss, srt_path, out_path, ffmpeg: str = "ffmpeg",
 
             def encoder(bitrate, _pngs=pngs):
                 encode_es_overlay(src_pss, _pngs, es_path, ffmpeg=ffmpeg, ffprobe=ffprobe,
-                                  bitrate_kbps=bitrate, mask=mask, bottom_margin=bottom_margin)
+                                  bitrate_kbps=bitrate, mask=mask, bottom_margin=bottom_margin,
+                                  band=band, band_pad=band_pad)
         fit_report = fit_to_budget(src_pss, srt_path, es_path, es_budget,
                                    ffmpeg=ffmpeg, ffprobe=ffprobe, encoder=encoder)
         bitrate = fit_report["bitrate_kbps"]
@@ -878,7 +897,7 @@ def burn(src_pss, srt_path, out_path, ffmpeg: str = "ffmpeg",
                 splice_report = {"late": 1, "new_size": 0}
             if not splice_report["late"] and splice_report["new_size"] <= max_bytes:
                 break
-            bitrate = int(bitrate * 0.88)
+            bitrate = int(bitrate * 0.96)
             if encoder is not None:
                 encoder(bitrate)
             else:

@@ -52,6 +52,22 @@ movie with ten Hindi cues. Not verified: audio/video sync over a
 multi-minute cutscene (this one is 50 s), and the 58 layer-1 movies
 beyond `layer1-patch`'s read-back check.
 
+## Picture quality
+
+The re-encode is lossy on top of the retail encode, so it should spend
+every bit the container allows. `fit_to_budget` starts at 95 % of the
+video slots' capacity (about 2.6 Mbit/s on `1001_1.pss`, whose retail
+stream is 2.75) and the encoder runs with a Main Level VBV (1,835 kbit),
+rate-distortion macroblock decisions, trellis quantisation and 10-bit
+DC. Measured above the subtitle band against the retail frames, that is
+33.9 dB luma PSNR; the first shipped build (2.34 Mbit/s with a VBV of
+0.3 × bitrate) was 31.1 dB and visibly blocky on the lab's desk shots —
+the tight buffer starved scene changes. ffmpeg's two-pass mode refuses
+constant-rate output, so this stays single-pass. The black bar and the
+cue itself are the rest of the difference from the retail picture; the
+bar is flat black, which the encoder codes in a handful of bits, so it
+is also where a blurred band's bits went.
+
 ## The PTS/DTS decision (two real bugs this was tested against)
 
 The first version of `splice()` carried each original video packet's
@@ -104,8 +120,16 @@ the next section's results.
    come out joined and ordered), white letters with a black outline and
    shadow, one PNG per cue, composited by ffmpeg's plain `overlay`
    filter. While a cue is up, the band where the original English sits
-   is blurred (`--mask x,y,w,h`, default `0,330,512,90`; `--mask none` to
-   leave it). This is the scheme poketony's XS1KOR used for the Korean
+   is covered with a solid black bar reaching the bottom of the frame
+   (`--mask x,y,w,h`, default `0,330,512,118`; `--band blur` for a box
+   blur of the band instead; `--mask none` to leave it). The bar hides
+   the English completely, costs the encoder nothing and leaves the rest
+   of the picture its bits; the blur left a soft smear and cost bits.
+   The cover opens `--band-pad` seconds (default 0.25) before each cue
+   and closes that long after it, because the original line's fade-in
+   and fade-out are rarely inside the SRT times and a late bar shows the
+   English for a few frames.
+   This is the scheme poketony's XS1KOR used for the Korean
    movies — fixed rows at 512×448, outline/shadow/dark spread over the
    original line, then a size-guarded MPEG-2 re-encode muxed over the
    untouched audio — minus libass, so any ffmpeg build works. The optional

@@ -2,6 +2,24 @@
 
 Newest first: what changed, why, and what it means for you.
 
+## 2026-10-15, later — the movie band is a black bar; the encoder spends the whole slot
+
+Two things the first captures showed. The re-encoded movie was blocky:
+the encoder ran with a rate buffer 0.3 × the bitrate, which starved
+scene changes, and at 85 % of the slot. It now runs at 95 % of the
+video slots' capacity with a Main Level buffer, rate-distortion
+macroblock decisions and trellis quantisation (33.9 dB luma above the
+band against retail, from 31.1). And the blurred band under the cue
+left a soft smear where the English had been; `subs-burn` now covers
+the band with a solid black bar to the bottom of the frame (`--mask
+0,330,512,118`, `--band black`), which hides the English outright and
+costs the encoder nothing, and opens a quarter second early and closes
+a quarter second late (`--band-pad`) so the English fade never peeks
+out. `--band blur` keeps the old look. The Hindi
+tree on the LANGTEST disc now holds all fourteen lines of the tutorial
+scene, so "Battle program has been set." and its neighbours are Hindi
+too. Captures of both are in SCRIPTS.md.
+
 ## 2026-10-15 — menu and battle words, movie subtitles, more scripts on screen
 
 Two gaps the script pipeline still had, both closed and both seen
@@ -26,8 +44,9 @@ overlay strings for the Korean disc.
 **Movies in any script without libass.** `subs-burn --font` renders each
 SRT cue itself — HarfBuzz shaping through the same code as the font
 step, white with a black outline — and composites it with ffmpeg's
-plain `overlay` filter, blurring the band that holds the burned-in
-English while a cue is up; `--cues DIR` takes hand-drawn PNGs instead.
+plain `overlay` filter, covering the band that holds the burned-in
+English with a black bar while a cue is up (`--band blur` for the
+earlier blur); `--cues DIR` takes hand-drawn PNGs instead.
 `subs-template --detect` times a skeleton from the original subtitle
 (white pixels with a dark outline next to them, sampled four times a
 second). The first Woglinde movie with ten Hindi cues plays in the game.
@@ -53,7 +72,10 @@ sector, so packs must stay 16,384 bytes with 4,096-byte packets, with
 video delivered no more than about 0.3 s ahead of its decode time.
 `subs.splice` is now a small muxer that reproduces that shape and
 pacing from the original's own stamps; the earlier "omit the stamps"
-version hung the game on a black screen.
+version hung the game on a black screen. The encoder also runs at the
+container's full rate with a proper VBV and trellis (33.9 dB above the
+band against retail, up from 31.1 on the first build, which was
+visibly blocky).
 
 **Hindi on screen.** The cold open's title, KOS-MOS's program menu,
 Allen's question and the Yes/No box, drawn by the game from Kohinoor
