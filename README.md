@@ -1,6 +1,6 @@
 # Xenosaga Episode I Python Extractor
 
-Unpack, browse and mod **Xenosaga Episode I — Der Wille zur Macht** (PS2,
+Unpack, browse and mod **Xenosaga Episode I — Der Wille zur Macht** (PlayStation 2 / PS2,
 USA release SLUS-20469) with nothing but Python. Point it at your own disc
 image and you get every file on the disc in a form your computer can
 open: textures as PNG, **models as glTF for Blender**, voices and music
