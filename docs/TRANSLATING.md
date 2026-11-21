@@ -47,22 +47,29 @@ The full reference, with every detail, is
 1. Get the kit. On the kit's GitHub page press the green **Code** button,
    then **Download ZIP**, and unpack it. (The translation editor is newer
    than the ready-made app on the Releases page, so use the ZIP for now.)
-2. Open the kit's folder and double-click the launcher for your system:
+2. Open the kit's folder and double-click the translation launcher for
+   your system:
 
    | System | Double-click |
    |---|---|
-   | Windows | `launch.bat` |
-   | macOS | `launch.command` (first time: right-click, then **Open**) |
-   | Linux | `launch.sh` |
+   | Windows | `translate.bat` |
+   | macOS | `translate.command` (first time: right-click, then **Open**) |
+   | Linux | `translate.sh` |
 
-3. A black text window opens, and then a page opens in your web browser.
-   **Leave the text window open** while you work. It is the program; the
-   browser page is only its screen. The first start takes a minute
-   because it installs its helper packages.
-4. On the page, click **Translation editor** at the top.
+3. A black text window opens, and then the translation editor opens in
+   your web browser. **Leave the text window open** while you work. It
+   is the program; the browser page is only its screen. The first start
+   takes a minute because it installs its helper packages.
 
-To come back another day, double-click the launcher again and open your
-project (step 2 on the page, **Open…**).
+You do not need the rest of the kit (unpacking the disc, textures,
+models, music) to translate. If you want it, the `launch` files next to
+the `translate` ones open the whole extractor, and its **Translation
+editor** button leads to this same page.
+
+To come back another day, double-click the translation launcher again.
+The editor remembers your disc and your project. (If it ever opens
+empty, pick the disc again and use **Open…** in step 2 to load your
+project file; nothing is lost.)
 
 ![The editor the first time it opens: four numbered steps across the top and a "Pick your untouched USA disc image" box](images/editor-first-run.png)
 
@@ -303,6 +310,8 @@ the safest way for long work outside the editor.
 
 The editor handles Cyrillic, Greek, Arabic, Hebrew, Hindi, Thai, Korean,
 Chinese, Japanese and many more: 382 languages are listed.
+
+![The same line of dialogue translated into Chinese, Arabic, Cherokee and Georgian in the editor, each with its preview in the game's font](images/editor-other-scripts.png)
 
 * **You need a font file** on your computer that has your letters. The
   setup finds suitable ones. Free [Noto fonts](https://fonts.google.com/noto)

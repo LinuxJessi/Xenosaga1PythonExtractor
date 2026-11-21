@@ -2110,10 +2110,22 @@ class ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 # Entry point
 # ---------------------------------------------------------------------------
 
+HOME_PORT = 20469       # after SLUS-20469
+
+
 def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+    """The kit's usual port when it is free, else any free one. The same port
+    on every launch matters: the browser keeps what the pages remember (the
+    translation editor's disc, project and switches) per address, port
+    included, so a new port each time would look like a first start."""
+    for want in (HOME_PORT, 0):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", want))
+                return s.getsockname()[1]
+        except OSError:
+            continue
+    return 0
 
 
 def main():
@@ -2139,12 +2151,16 @@ def main():
             f"Failed to bind to 127.0.0.1:{port} — {exc}.",
         )
 
+    # --editor: open straight on the translation editor (translate.command /
+    # translate.bat / translate.sh), without passing through the extractor cards
+    start = url + "editor" if "--editor" in sys.argv else url
     print(f"[gui] Xenosaga Episode I Extractor")
     print(f"[gui] Open: {url}")
+    print(f"[gui] Translation editor: {url}editor")
     print(f"[gui] Press Ctrl+C to stop.")
 
     if "--no-browser" not in sys.argv:
-        threading.Thread(target=lambda: webbrowser.open(url), daemon=True).start()
+        threading.Thread(target=lambda: webbrowser.open(start), daemon=True).start()
 
     try:
         server.serve_forever()

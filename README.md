@@ -107,7 +107,9 @@ page and double-click it. Nothing to install.
 the three packages in `requirements.txt` the first time): double-click `launch.bat` (Windows), `launch.command` (macOS)
 or `launch.sh` (Linux), or run `python gui.py`. The app opens as a page
 in your browser, finds your disc image, and shows one card per job
-with a live log. The **Translation editor** button in its header opens
+with a live log. To translate only, `translate.bat` / `translate.command`
+/ `translate.sh` (or `python gui.py --editor`) open the translation editor
+by itself. The **Translation editor** button in the app's header opens
 a second page listing every string of the game by type, for typing or
 pasting a translation and building a patched disc in one click
 (start with [docs/TRANSLATING.md](docs/TRANSLATING.md)).

@@ -20,9 +20,14 @@ work as before; see [Limitations](#limitations).
 
 ## Starting it
 
-* **App:** click **Translation editor** in the header, or open card
-  7.9 and click **Open the translation editor**. The page opens in a new
-  tab at `/editor`.
+* **On its own:** double-click `translate.bat` (Windows),
+  `translate.command` (macOS) or `translate.sh` (Linux), or run
+  `python gui.py --editor`. The editor opens directly; nothing of the
+  extractor has to be run first. (The release app takes the same
+  `--editor` argument.)
+* **From the extractor app:** click **Translation editor** in the header,
+  or open card 7.9 and click **Open the translation editor**. The page
+  opens in a new tab at `/editor`.
 * **Headless:** `PORT=8931 python3 gui.py --no-browser`, then open
   `http://127.0.0.1:8931/editor`.
 * **Terminal only:** `python cli.py tx-catalog --iso GAME.iso --out catalog.json`
@@ -291,6 +296,21 @@ one of the 382 has been drawn through the Try-it path with an installed
 macOS font (the best-ranked one); Cherokee, Inuktitut, Tamazight, N'Ko,
 Yoruba and Hawaiian were also built into an ISO and read back. Adding a
 language = one line in `txlangs.py`.
+
+The same cutscene line in four scripts, as the editor shows it (the
+translation box, then the preview drawn with the game's font and the
+chosen TrueType font):
+
+![The line "Morning, KOS-MOS. How do you feel?" translated into Traditional Chinese, Arabic (right to left), Cherokee and Georgian in the editor, each checked OK with a preview](images/editor-other-scripts.png)
+
+Sample lines from the Language setup's *Try it* box for twelve scripts:
+
+![Sample lines in Chinese, Cherokee, Arabic, Inuktitut syllabics, N'Ko, Tifinagh, Amharic, Georgian, Khmer, Vai, Armenian and Thai drawn in the game's font](images/editor-scripts.png)
+
+These are the editor's previews, not in-game captures. Known weak spots:
+brackets and numbers next to Latin words in a right-to-left line can land
+on the wrong side (text is reordered word by word), and Tibetan stacks
+do not form with the fonts tried so far.
 
 | Kind | Languages (examples) | What Build does |
 |---|---|---|

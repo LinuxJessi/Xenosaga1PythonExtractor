@@ -2492,7 +2492,9 @@ function adoptProject(path, proj, mtime) {
   S.proj = proj; S.projPath = path; $('proj').value = path; store('proj', path);
   S.projMtime = mtime || null; S.base = JSON.parse(JSON.stringify(proj.translations || {}));
   if (!S.proj.retail_id && S.rid && S.rid !== 'fake') S.proj.retail_id = S.rid;
-  setLangFromProject(proj);
+  // the language (target, font) resolves asynchronously; the checks must run
+  // with it, not with the language that was open before
+  const langReady = setLangFromProject(proj);
   // lines typed before any project was open
   const pending = Object.entries(S.pending || {}).filter(([, t]) => t);
   S.pending = null;
@@ -2508,7 +2510,8 @@ function adoptProject(path, proj, mtime) {
   setSaved('saved', 'good'); S.dirty = false;
   if (pending.length) { markDirty(); toast(pending.length + ' line(s) typed earlier added to ' + basename(path)); }
   if (cleaned) markDirty();
-  renderTree(); refreshView(false); renderEditor(); runAllChecks(); updateBuildSummary(); updateSteps();
+  renderTree(); refreshView(false); renderEditor(); updateBuildSummary(); updateSteps();
+  langReady.catch(() => {}).then(() => { if (S.proj === proj) { renderEditor(); runAllChecks().then(updateBuildSummary); } });
   if (projectNeedsHidden()) loadHidden();
 }
 async function openProject(path) {
