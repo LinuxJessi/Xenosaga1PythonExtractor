@@ -103,7 +103,7 @@ page and double-click it. Nothing to install.
 | Windows | `Xenosaga-I-Extractor-windows/Xenosaga-I-Extractor.exe` |
 | macOS | `Xenosaga-I-Extractor.app` (first time: right-click ▸ Open, because of Gatekeeper) |
 
-From the next release on, the bundle also holds **Xenosaga I Translation
+Since v1.3.0 the bundle also holds **Xenosaga I Translation
 Editor** (`Xenosaga-I-Translation-Editor.exe` on Windows, a second `.app`
 on macOS, kept in the same folder as the first): double-click it to go
 straight to the translation editor.

@@ -37,18 +37,29 @@ The full reference, with every detail, is
 |---|---|
 | **The game** | Your own disc image of *Xenosaga Episode I: Der Wille zur Macht*, **USA version** (SLUS-20469), as one `.iso` file of about 8 GB. It must be an untouched copy. The kit contains no game data. |
 | **A computer** | Windows, macOS or Linux. |
-| **Python** | Version 3.9 or newer, from [python.org](https://www.python.org/downloads/). On Windows, tick **Add Python to PATH** in the installer. |
+| **Python** | Only if you run the kit from its source instead of the app: version 3.9 or newer, from [python.org](https://www.python.org/downloads/). On Windows, tick **Add Python to PATH** in the installer. |
 | **Free disk space** | About 9 GB for each disc you build. (On a Mac, building next to the original image takes almost no space.) |
 | **An emulator** | [PCSX2](https://pcsx2.net/), to look at your translation in the game. |
-| **Internet, once** | The first start downloads three small helper packages. |
+| **Internet, once** | Only from the source: the first start downloads three small helper packages. |
 
 ## 2. Start the editor
 
-1. Get the kit. On the kit's GitHub page press the green **Code** button,
-   then **Download ZIP**, and unpack it. (The translation editor is newer
-   than the ready-made app on the Releases page, so use the ZIP for now.
-   From the next release, the app download will contain a **Xenosaga I
-   Translation Editor** icon to double-click, with nothing to install.)
+**The easy way (Windows and macOS): the app.** Nothing to install, not
+even Python.
+
+1. On the kit's GitHub page open **Releases** and download the zip for
+   your system (version 1.3.0 or newer). Unpack it.
+2. Double-click **Xenosaga-I-Translation-Editor**. On a Mac, the first
+   time, right-click `Xenosaga-I-Extractor.app` and choose **Open**
+   once, then double-click the Translation Editor; keep the two apps in
+   the same folder.
+3. The translation editor opens in your web browser.
+
+**From the source (any system, and the only way on Linux).** This needs
+Python (see the table above).
+
+1. On the kit's GitHub page press the green **Code** button, then
+   **Download ZIP**, and unpack it.
 2. Open the kit's folder and double-click the translation launcher for
    your system:
 
@@ -68,7 +79,7 @@ models, music) to translate. If you want it, the `launch` files next to
 the `translate` ones open the whole extractor, and its **Translation
 editor** button leads to this same page.
 
-To come back another day, double-click the translation launcher again.
+To come back another day, double-click the same icon again.
 The editor remembers your disc and your project. (If it ever opens
 empty, pick the disc again and use **Open…** in step 2 to load your
 project file; nothing is lost.)
