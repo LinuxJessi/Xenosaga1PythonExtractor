@@ -132,7 +132,10 @@ jobs:
           body: |
             ### macOS: first launch
 
-            The app is ad-hoc signed, not notarized. After unzipping,
-            right-click **Xenosaga-I-Extractor.app** → **Open** the first
-            time (or run `xattr -dr com.apple.quarantine Xenosaga-I-Extractor.app`).
-            After that it double-clicks normally.
+            The apps are ad-hoc signed, not notarized. After unzipping,
+            run this once in Terminal on the unzipped folder:
+            `xattr -dr com.apple.quarantine Xenosaga-I-Extractor-macos`
+            (or right-click **Xenosaga-I-Extractor.app** → **Open** the
+            first time). After that both apps double-click normally.
+            **Xenosaga-I-Translation-Editor.app** is a small launcher
+            for the first app: keep the two in the same folder.

@@ -72,9 +72,14 @@ def _make_translation_app() -> bool:
 # Opens the translation editor: starts the Extractor app next to this one
 # under its second name, which goes straight to the editor page.
 HERE="$(cd "$(dirname "$0")/../../.." && pwd)"
-REAL="$HERE/{APP.name}/Contents/MacOS/{TR_NAME}"
-if [ ! -x "$REAL" ]; then
-    osascript -e 'display dialog "Keep this app in the same folder as {APP.name}: it opens the translation editor of that app." buttons {{"OK"}} default button 1 with title "Xenosaga I Translation Editor"' >/dev/null 2>&1
+REAL=""
+# next to this app first; then the usual places (a freshly downloaded app is
+# run by macOS from a private copy of itself, where it has no neighbours)
+for D in "$HERE" "/Applications" "$HOME/Applications" "$HOME/Downloads/Xenosaga-I-Extractor-macos" "$HOME/Desktop/Xenosaga-I-Extractor-macos"; do
+    if [ -x "$D/{APP.name}/Contents/MacOS/{TR_NAME}" ]; then REAL="$D/{APP.name}/Contents/MacOS/{TR_NAME}"; break; fi
+done
+if [ -z "$REAL" ]; then
+    osascript -e 'display dialog "This app opens the translation editor of {APP.name} and could not find it.\n\nKeep the two apps in the same folder. If they are, macOS is still holding the download in quarantine: open {APP.name} once (right-click, Open), or use its Translation editor button." buttons {{"OK"}} default button 1 with title "Xenosaga I Translation Editor"' >/dev/null 2>&1
     exit 1
 fi
 exec "$REAL" "$@"
