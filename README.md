@@ -22,6 +22,13 @@ The game running from a disc the kit rebuilt, captured in PCSX2 (nothing composi
 | ![Hindi: KOS-MOS confirming the battle program, drawn by the game from a rebuilt font](docs/images/ingame-hindi-program-set.png) | ![Hindi: a subtitle the kit burned into the first movie, on a black bar over the English](docs/images/ingame-hindi-movie.png) |
 | ![Georgian (Mkhedruli): KOS-MOS's command bars in the battle screen's own font](docs/images/ingame-georgian-battle.png) | ![Arabic: the cold-open line, joined and right-to-left](docs/images/ingame-arabic-cold-open.png) |
 
+Translate into any writing system. These are samples drawn by the
+[translation editor](docs/TRANSLATING.md)'s Language setup: the game's own
+font, with the letters it never had taken from a font on your computer
+(previews from the editor, not in-game captures; 382 languages are listed):
+
+![Twelve sample lines drawn in the game's font: Chinese, Cherokee, Arabic, Inuktitut syllabics, N'Ko, Tifinagh, Amharic, Georgian, Khmer, Vai, Armenian and Thai](docs/images/editor-scripts.png)
+
 ## What's new (October 2026)
 
 * **Translation without length limits.** Cutscene and field dialogue now
