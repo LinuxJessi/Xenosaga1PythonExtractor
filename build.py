@@ -38,6 +38,49 @@ DIST = ROOT / "dist"
 PLATFORM = {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux")
 BUNDLE = DIST / f"Xenosaga-I-Extractor-{PLATFORM}"
 APP = DIST / "Xenosaga-I-Extractor.app"  # macOS only
+TR_NAME = "Xenosaga-I-Translation-Editor"
+TR_APP = DIST / f"{TR_NAME}.app"         # macOS only: launcher for the editor
+
+
+def _make_translation_app() -> bool:
+    """macOS: a second, tiny .app that opens the translation editor directly.
+    It holds no runtime of its own: its executable is a shell script that
+    starts ``Xenosaga-I-Translation-Editor`` inside the Extractor.app sitting
+    next to it (so the two apps ship, and stay, in one folder)."""
+    shutil.rmtree(TR_APP, ignore_errors=True)
+    macos = TR_APP / "Contents" / "MacOS"
+    res = TR_APP / "Contents" / "Resources"
+    macos.mkdir(parents=True)
+    res.mkdir(parents=True)
+    icns = ROOT / "packaging" / "icon.icns"
+    if icns.exists():
+        shutil.copyfile(icns, res / "icon.icns")
+    (TR_APP / "Contents" / "Info.plist").write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleName</key><string>Xenosaga I Translation Editor</string>
+  <key>CFBundleDisplayName</key><string>Xenosaga I Translation Editor</string>
+  <key>CFBundleIdentifier</key><string>io.github.linuxjessi.xenosaga1extractor.translate</string>
+  <key>CFBundleExecutable</key><string>{TR_NAME}</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIconFile</key><string>icon.icns</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict></plist>
+""", encoding="utf-8")
+    script = macos / TR_NAME
+    script.write_text(f"""#!/bin/sh
+# Opens the translation editor: starts the Extractor app next to this one
+# under its second name, which goes straight to the editor page.
+HERE="$(cd "$(dirname "$0")/../../.." && pwd)"
+REAL="$HERE/{APP.name}/Contents/MacOS/{TR_NAME}"
+if [ ! -x "$REAL" ]; then
+    osascript -e 'display dialog "Keep this app in the same folder as {APP.name}: it opens the translation editor of that app." buttons {{"OK"}} default button 1 with title "Xenosaga I Translation Editor"' >/dev/null 2>&1
+    exit 1
+fi
+exec "$REAL" "$@"
+""", encoding="utf-8")
+    script.chmod(0o755)
+    return (APP / "Contents" / "MacOS" / TR_NAME).exists()
 
 
 def _run_selftest(argv) -> bool:
@@ -86,6 +129,7 @@ def main() -> int:
         shutil.rmtree(BUNDLE, ignore_errors=True)
         if sys.platform == "darwin":
             shutil.rmtree(APP, ignore_errors=True)
+            shutil.rmtree(TR_APP, ignore_errors=True)
 
     print(f"=== pyinstaller {' '.join(argv)} ===", flush=True)
     pyinstaller(argv)
@@ -101,7 +145,13 @@ def main() -> int:
     if sys.platform == "darwin":
         app_ok = (APP / "Contents" / "MacOS" / "Xenosaga-I-Extractor").exists()
         print(f"  app  : {APP.name}  {'OK' if app_ok else 'MISSING'}")
-        ok = ok and app_ok
+        tr_ok = app_ok and _make_translation_app()
+        print(f"  app  : {TR_APP.name}  {'OK' if tr_ok else 'MISSING'}")
+        ok = ok and app_ok and tr_ok
+    else:
+        tr = BUNDLE / f"{TR_NAME}{ext}"
+        print(f"  editor: {tr.name}  {'OK' if tr.exists() else 'MISSING'}")
+        ok = ok and tr.exists()
     if ok:
         # a bundle that is missing a module fails here, not on someone else's machine
         print("self-test from the bundle:")

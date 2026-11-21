@@ -103,6 +103,11 @@ page and double-click it. Nothing to install.
 | Windows | `Xenosaga-I-Extractor-windows/Xenosaga-I-Extractor.exe` |
 | macOS | `Xenosaga-I-Extractor.app` (first time: right-click ▸ Open, because of Gatekeeper) |
 
+From the next release on, the bundle also holds **Xenosaga I Translation
+Editor** (`Xenosaga-I-Translation-Editor.exe` on Windows, a second `.app`
+on macOS, kept in the same folder as the first): double-click it to go
+straight to the translation editor.
+
 **From a source checkout** (Python 3.9 or newer; the launchers install
 the three packages in `requirements.txt` the first time): double-click `launch.bat` (Windows), `launch.command` (macOS)
 or `launch.sh` (Linux), or run `python gui.py`. The app opens as a page

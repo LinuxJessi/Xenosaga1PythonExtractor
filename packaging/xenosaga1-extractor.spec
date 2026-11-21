@@ -8,10 +8,13 @@ so Windows / macOS / Linux builds can coexist in ``dist/``:
 
     dist/Xenosaga-I-Extractor-windows/     (built on Windows)
       Xenosaga-I-Extractor.exe             windowed launcher — the local web GUI
+      Xenosaga-I-Translation-Editor.exe    the same GUI, opened on the translation editor
       xeno-cli.exe                         console; the CLI the GUI shells out to
       _internal/, python3X.dll             shared runtime (deduped across both exes)
 
     dist/Xenosaga-I-Extractor.app          (built on macOS — double-click this)
+    dist/Xenosaga-I-Translation-Editor.app (made by build.py: a small launcher that
+                                           starts the app next to it on the editor)
     dist/Xenosaga-I-Extractor-macos/       (same build, bare folder form)
 
 Ship the platform folder (zip it) — or, on macOS, the .app. Because both
@@ -143,6 +146,26 @@ gui_exe = EXE(
     version=_ver("version_info_gui.txt"),
 )
 
+# The translation editor on its own: the same program as the GUI under a
+# second name. gui.py opens the editor page first when its executable is
+# called this (or is given --editor), so translators never pass through the
+# extractor cards. Same PYZ and scripts: it costs one small launcher file.
+tr_exe = EXE(
+    gui_pyz,
+    gui_a.scripts,
+    [],
+    exclude_binaries=True,
+    name="Xenosaga-I-Translation-Editor",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,
+    disable_windowed_traceback=False,
+    icon=ICON_ARG,
+    version=_ver("version_info_gui.txt"),
+)
+
 cli_exe = EXE(
     cli_pyz,
     cli_a.scripts,
@@ -164,6 +187,7 @@ coll = COLLECT(
     gui_a.binaries,
     gui_a.zipfiles,
     gui_a.datas,
+    tr_exe,
     cli_exe,
     cli_a.binaries,
     cli_a.zipfiles,

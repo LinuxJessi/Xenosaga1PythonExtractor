@@ -46,7 +46,9 @@ The full reference, with every detail, is
 
 1. Get the kit. On the kit's GitHub page press the green **Code** button,
    then **Download ZIP**, and unpack it. (The translation editor is newer
-   than the ready-made app on the Releases page, so use the ZIP for now.)
+   than the ready-made app on the Releases page, so use the ZIP for now.
+   From the next release, the app download will contain a **Xenosaga I
+   Translation Editor** icon to double-click, with nothing to install.)
 2. Open the kit's folder and double-click the translation launcher for
    your system:
 

@@ -109,7 +109,12 @@ jobs:
       # ditto preserves the symlinks and exec bits inside the .app;
       # Compress-Archive / plain zip -r do not.
       - name: Create zip
-        run: ditto -c -k --keepParent "dist/Xenosaga-I-Extractor.app" "Xenosaga-I-Extractor-macos.zip"
+        # both apps in one folder: the Translation Editor app is a launcher
+        # for the Extractor app next to it
+        run: |
+          mkdir "Xenosaga-I-Extractor-macos"
+          mv "dist/Xenosaga-I-Extractor.app" "dist/Xenosaga-I-Translation-Editor.app" "Xenosaga-I-Extractor-macos/"
+          ditto -c -k --keepParent "Xenosaga-I-Extractor-macos" "Xenosaga-I-Extractor-macos.zip"
 
       - uses: actions/upload-artifact@v4
         with:

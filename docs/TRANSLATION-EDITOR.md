@@ -23,8 +23,10 @@ work as before; see [Limitations](#limitations).
 * **On its own:** double-click `translate.bat` (Windows),
   `translate.command` (macOS) or `translate.sh` (Linux), or run
   `python gui.py --editor`. The editor opens directly; nothing of the
-  extractor has to be run first. (The release app takes the same
-  `--editor` argument.)
+  extractor has to be run first. In the app bundle the same thing is a
+  second icon to double-click: `Xenosaga-I-Translation-Editor.exe` on
+  Windows, `Xenosaga-I-Translation-Editor.app` on macOS (a small launcher
+  that must stay in the same folder as `Xenosaga-I-Extractor.app`).
 * **From the extractor app:** click **Translation editor** in the header,
   or open card 7.9 and click **Open the translation editor**. The page
   opens in a new tab at `/editor`.

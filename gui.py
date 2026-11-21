@@ -2153,7 +2153,10 @@ def main():
 
     # --editor: open straight on the translation editor (translate.command /
     # translate.bat / translate.sh), without passing through the extractor cards
-    start = url + "editor" if "--editor" in sys.argv else url
+    # The app bundle carries a second launcher, Xenosaga-I-Translation-Editor
+    # (the same program under another name), which does the same.
+    editor_first = "--editor" in sys.argv or (FROZEN and "translation" in Path(sys.executable).stem.lower())
+    start = url + "editor" if editor_first else url
     print(f"[gui] Xenosaga Episode I Extractor")
     print(f"[gui] Open: {url}")
     print(f"[gui] Translation editor: {url}editor")
