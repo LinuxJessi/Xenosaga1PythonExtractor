@@ -130,17 +130,35 @@ def uml_split(data: bytes):
     return data[UML_HEADER:end], img
 
 
+def uml_tail(data: bytes) -> bytes:
+    """The bytes from the first NUL up to and including the page's real
+    terminator. The engine finds the end of a page by stepping over whole
+    control codes, so a NUL that is a control operand (the ``0D 00`` after a
+    database title, the ``0D 00 15 02 04 00`` reset that closes a mail) is
+    not the end: everything up to the terminator (the database body, the
+    reset codes) belongs to the page and must survive a rebuild."""
+    from font import control_length
+    first = data.find(b"\x00", UML_HEADER)
+    if first < 0:
+        return b""
+    i = UML_HEADER
+    while i < len(data) and data[i] != 0:
+        i += control_length(data, i) if data[i] < 0x20 else 1
+    return data[first:i + 1]
+
+
 def uml_text_budget(data: bytes, alloc: int) -> int:
     """Longest text (bytes, without NUL) that keeps the object within ``alloc``."""
     _, img = uml_split(data)
     tail = len(data) - img
     room = (alloc - tail) // UML_ALIGN * UML_ALIGN
-    return max(0, room - UML_HEADER - 1)
+    return max(0, room - UML_HEADER - max(1, len(uml_tail(data))))
 
 
 def uml_rebuild(data: bytes, text: bytes) -> bytes:
     """Mail object with its text replaced; images shifted and pointers fixed
-    when the text grows past the original image offset."""
+    when the text grows past the original image offset. What follows the
+    first NUL up to the real terminator (``uml_tail``) is always kept."""
     old_text, img = uml_split(data)
     slot = img - UML_HEADER
     end = UML_HEADER + len(old_text)          # retail NUL position
@@ -148,10 +166,11 @@ def uml_rebuild(data: bytes, text: bytes) -> bytes:
         # retail layout untouched: the slot is space-padded, and whatever
         # follows the NUL (a stray control code, zero padding) is kept
         return data[:UML_HEADER] + text.ljust(len(old_text), b" ") + data[end:]
-    if len(text) < slot:
-        return (data[:UML_HEADER] + text + b"\x00" + bytes(slot - len(text) - 1)
+    tail = uml_tail(data) or b"\x00"
+    if len(text) + len(tail) <= slot:
+        return (data[:UML_HEADER] + text + tail + bytes(slot - len(text) - len(tail))
                 + data[img:])
-    new_img = (UML_HEADER + len(text) + 1 + UML_ALIGN - 1) // UML_ALIGN * UML_ALIGN
+    new_img = (UML_HEADER + len(text) + len(tail) + UML_ALIGN - 1) // UML_ALIGN * UML_ALIGN
     delta = new_img - img
     hdr = bytearray(data[:UML_HEADER])
     struct.pack_into("<I", hdr, 0x20, new_img)
@@ -159,7 +178,7 @@ def uml_rebuild(data: bytes, text: bytes) -> bytes:
         ptr = struct.unpack_from("<I", hdr, off)[0]
         if img <= ptr < len(data):
             struct.pack_into("<I", hdr, off, ptr + delta)
-    region = text + bytes(new_img - UML_HEADER - len(text))
+    region = text + tail + bytes(new_img - UML_HEADER - len(text) - len(tail))
     return bytes(hdr) + region + data[img:]
 
 

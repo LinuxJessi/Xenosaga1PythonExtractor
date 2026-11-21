@@ -76,7 +76,8 @@ the head.
 
 ## Known gaps
 
-* **No animation.** Not located on the disc yet.
+* **No animation.** The motion clips are located on the disc but their keys
+  are not decoded yet ([MODELS.md](MODELS.md), "What is not done").
 * Two map meshes use vertex formats the parser skips, and blend shapes
   are ignored. Anything skipped is listed in the `.glb`'s `extras`.
 

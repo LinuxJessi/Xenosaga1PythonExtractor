@@ -9,3 +9,5 @@ packaging/tools/ffmpeg.exe
 # PyInstaller writes stray specs next to a script; ours lives in packaging/ and
 # is committed, so ignore only root-level generated specs.
 /*.spec
+# kit-local Python environment made by the launchers (PEP 668 Pythons)
+.venv/

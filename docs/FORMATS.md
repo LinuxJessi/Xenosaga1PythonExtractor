@@ -59,9 +59,12 @@ usize field. (Nominal 8-bit codes can index past 30; retail files don't.)
 **Compressor** (`arx.py: compress`, 2026-07-11): LUT = the 30 most frequent
 u32 words, most frequent first (shortest codes), **ties broken by first
 occurrence in the payload** — with that tie-break the output reproduces
-retail blobs *byte-identically* for 2,094/2,095 compressed objects on the
-USA disc (`chain1/mtnpack/SCE02004D.arc` differs in a tie only; same size,
-exact round-trip). So Monolith's packer used the same greedy scheme. Full
+retail blobs *byte-identically* for 2,165 of the 2,168 compressed objects on
+the USA disc, all three chains (`python cli.py self-test --iso GAME.iso --full`
+recounts it; the earlier figure of 2,094/2,095 was chains 0 and 1 before
+chain 2 was found). The three others, `chain1/mtnpack/SCE02004D.arc`,
+`chain2/mtnpack/SCE03031B.arc` and `chain2/mtnpack/SCE03050C1.arc`, differ
+in a tie only: same size, exact round-trip. So Monolith's packer used the same greedy scheme. Full
 control-bit sequences per slot: `1 0 x` (slots 0-1), `1 10xx` (2-5),
 `1 110xxx` (6-13), `1 111xxxxx` (14-29) — 3/5/7/9 bits vs 33 for a literal.
 Header size_comp = whole blob length incl. header; unk = 0.
@@ -751,6 +754,45 @@ written back in place when the next extent leaves room (870 bytes after
 OV01) or appended to the image with its directory record's extent and
 length repointed (`repack.relocate_fs_file`). Verified on PCSX2: seven
 OV01 strings moved to 0xA5B8F8+ and drawn by the battle menu.
+
+The boot ELF cannot grow that way. Its three `PT_LOAD`s are `.text`
+(0x200000-0x338588), the data segment (0x338600, 0x1A3ED8 bytes in the
+file, 0x665310 in memory: `.sbss` from `_fbss` 0x4DC500 and `.bss` to
+`_end` 0x99D910 follow `.sdata` directly, and `_start` zeroes
+`_fbss`..`_end`), and a copy of OV02 at 0xA00000. Bytes appended to the
+data would be the first variables of `.sbss`. What the file does say is
+where memory is free: `_start` calls `SetupHeap(_end, _heap_size)` with
+`_heap_size` = 0x10000, so `malloc` ends at 0x9AD910; the main stack is
+below the code (`_stack` 0x1F8000, `_stack_size` 0x8000); the game's own
+allocator starts at 0xA80000 (`InitializeSystem`); and the lowest
+overlay address is 0x9FF000. No instruction in the boot ELF or any
+overlay forms an address in 0x9AD910-0x9FF000 (no `lui` of 0x9B-0x9F, no
+`lui 0xA0` with a negative low half, no data word in the range), and the
+span reads as zero in eleven PCSX2 save states (all taken with OV01
+loaded). `ovl-import --grow` puts the boot ELF's long strings
+there, in a fourth `PT_LOAD` at 0x9B8000 (64K boundary after the heap,
+plus 32K) described by a fifth program header written into the zero
+padding after the four (file offset 0xB4; the padding runs to 0x1000).
+The segment's bytes go in the same padding from 0xE0 while they fit
+(3,872 bytes, file size unchanged, ELF patched in place on the disc),
+else after `.strtab` at the end of the file. Pointer words and
+`lui`/`addiu` pairs are repointed as in the overlays; the old bytes stay
+in their slot, so a reference the scanner did not see still shows the
+original text. The 32K offset makes the low halves negative
+(`lui 0x9C; addiu -0x8000…`): on a later scan of the grown file, a
+string at 0x9B0000 + 8 would be "referenced" by any `lw rX, 8(rY)` whose
+`rY` last held 0x9B, and a second import would patch that instruction.
+Past 32K of moved strings the low halves turn small and positive, so
+take the executables from the unmodified disc (`--retail`) on every
+import rather than re-importing a grown one. The few strings addressed
+off `$gp` (19, all file-name fragments such as `.xtx`, none exported)
+could not be moved, and the importer refuses one if it meets it. The
+zone is derived from the symbols (`_end`, `_heap_size`, `_stack`) and
+the overlays' program headers, so an executable without a symbol table stays in place
+only. Checked
+statically: every reference of a moved string resolves to the new bytes,
+nothing else in the file differs, and the export of the patched disc
+lists each new text; not yet booted on PCSX2 or a console.
 
 ## The battle screen's font (`statfont.py`)
 

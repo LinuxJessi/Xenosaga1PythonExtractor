@@ -509,6 +509,21 @@ def build_layer1_list(form):
     return [*CLI_ARGV, "layer1-list", "--iso", iso]
 
 
+def build_region(form):
+    iso = _str(form, "iso")
+    if not iso:
+        raise ValueError("ISO path is required")
+    return [*CLI_ARGV, "region", "--iso", iso]
+
+
+def build_self_test(form):
+    args = [*CLI_ARGV, "self-test"]
+    iso = _str(form, "iso")
+    if iso:
+        args += ["--iso", iso]
+    return args
+
+
 def build_layer1_patch(form):
     iso = _str(form, "iso")
     out = _str(form, "out")
@@ -526,6 +541,22 @@ def build_layer1_patch(form):
     args = [*CLI_ARGV, "layer1-patch", "--iso", iso, "--out", out]
     args += ["--index", index] if index else ["--name", name]
     args += ["--file", file_]
+    return args
+
+
+def build_tx_build(form):
+    project = _str(form, "project")
+    retail = _str(form, "retail")
+    out = _str(form, "out")
+    if not project:
+        raise ValueError("Project file is required")
+    if not retail:
+        raise ValueError("Retail ISO path is required")
+    if not out:
+        raise ValueError("Output ISO path is required")
+    args = [*CLI_ARGV, "tx-build", "--project", project, "--retail", retail, "--out", out]
+    if _bool(form, "overwrite"):
+        args.append("--overwrite")
     return args
 
 
@@ -552,6 +583,9 @@ BUILDERS = {
     "subs-burn":     build_subs_burn,
     "layer1-list":   build_layer1_list,
     "layer1-patch":  build_layer1_patch,
+    "tx-build":      build_tx_build,
+    "region":        build_region,
+    "self-test":     build_self_test,
 }
 
 
@@ -1118,6 +1152,7 @@ code, kbd {
     <div class="tagline">Der Wille zur Macht · disc unpacker</div>
   </div>
   <div class="actions">
+    <button id="btn-editor" title="Browse every string of the game by type, translate, build a patched ISO">Translation editor</button>
     <button class="ghost" id="btn-refresh">Refresh status</button>
   </div>
 </header>
@@ -1156,6 +1191,7 @@ code, kbd {
 </div>
 
 <script>
+const TX_TOKEN = '__TX_TOKEN__';   // per-launch; every POST carries it (txserver.TOKEN)
 const log = document.getElementById('log');
 let currentEventSource = null;
 const cardEls = {};
@@ -1199,7 +1235,7 @@ async function runCommand(name, formData) {
   setStatus(name, 'run');
   const res = await fetch('/run/' + name, {
     method: 'POST',
-    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-TX-Token': TX_TOKEN},
     body: formData,
   });
   if (!res.ok) {
@@ -1447,7 +1483,7 @@ function makeCard(step, name, title, help, fields, buttonText) {
     form.querySelectorAll('input[type=checkbox]').forEach(cb => fd.set(cb.name, cb.checked ? 'on' : ''));
     fetch('/preview/' + name, {
       method: 'POST',
-      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-TX-Token': TX_TOKEN},
       body: new URLSearchParams(fd).toString(),
     }).then(r => r.json()).then(j => {
       log.textContent = '';
@@ -1600,6 +1636,30 @@ async function loadStatus() {
       {name: 'dry_run', label: 'Dry run',     type: 'checkbox',
        hint: 'sweep and report only — write no ISO'},
     ], 'Recolor'));
+
+  const edCard = document.createElement('div');
+  edCard.className = 'card';
+  edCard.innerHTML = `
+    <div class="card-head">
+      <span class="step">7.9.</span>
+      <h3>Translation editor (any language)</h3>
+      <span class="badge" title="opens in its own tab">page</span>
+      <span class="chev">▼</span>
+    </div>
+    <div class="card-body">
+      <p class="help">One page for every translatable string on the disc, sorted by type: field and
+      cutscene dialogue, speaker names, choices, U.M.N. mail, database and chats, items, skills,
+      enemies, menus, battle words, key items, cards, casino and enemy battle quotes. Type or paste
+      translations, see byte limits, token checks and a preview drawn with the game's own font, then
+      <em>Build</em> one patched ISO (the retail image is only read). Accents and « » ¿ ¡ œ ç ñ are
+      encoded for you, and languages in other alphabets (Russian, Arabic, Hindi, Chinese, …) are set
+      up in the editor's Language setup with a font from your computer. Movie subtitles use the
+      subtitle cards. Start with docs/TRANSLATING.md.</p>
+      <div class="actions"><button type="button" class="open-editor">Open the translation editor</button></div>
+    </div>`;
+  edCard.querySelector('.card-head').addEventListener('click', () => edCard.classList.toggle('open'));
+  edCard.querySelector('.open-editor').addEventListener('click', () => window.open('/editor', '_blank'));
+  cards.appendChild(edCard);
 
   cards.appendChild(makeCard(8, 'text-export', 'Export text for translation',
     'Pulls all 914 text objects off the disc into an editable UTF-8 tree: 588 <code>.txt</code> ' +
@@ -1830,11 +1890,29 @@ async function loadStatus() {
       {name: 'file',  label: 'Replacement .pss', pick: {mode: 'file', filter: 'pss'}},
     ], 'Write back'));
 
+  cards.appendChild(makeCard(15, 'region', 'Which disc is this?',
+    'Reads the build from the image itself: the boot executable and its sha256, whether it still has ' +
+    'its function names, how many objects each data chain holds, and what the kit has been checked ' +
+    'with on that build (USA retail, or the Japanese <em>Reloaded</em> disc). Read-only.',
+    [
+      {name: 'iso', label: 'Disc image', value: defaultIso, pick: {mode: 'file', filter: 'iso'}},
+    ], 'Identify'));
+
+  cards.appendChild(makeCard(16, 'self-test', 'Check the kit (self-test)',
+    'Runs the kit\'s own checks: every module and required package imports, the codecs round-trip, ' +
+    'the translation editor answers every route. With a disc image it also re-proves, read-only, that ' +
+    'the compressor reproduces the disc\'s own bytes and that fonts and dialogue rebuild identically ' +
+    '(about half a minute).',
+    [
+      {name: 'iso', label: 'Disc image (optional)', value: defaultIso, pick: {mode: 'file', filter: 'iso'}},
+    ], 'Run the checks'));
+
   // Open the extract card by default
   cards.querySelector('[data-name="extract"]').classList.add('open');
 })();
 
 document.getElementById('btn-refresh').addEventListener('click', loadStatus);
+document.getElementById('btn-editor').addEventListener('click', () => window.open('/editor', '_blank'));
 </script>
 </body>
 </html>
@@ -1865,11 +1943,43 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _send_json(self, status, payload):
         self._send(status, json.dumps(payload), "application/json")
 
+    def _refuse(self, post: bool) -> bool:
+        """Answer 403 and return True unless the request may proceed.
+
+        Every route answers only to a loopback Host (DNS rebinding) and a
+        loopback Origin when one is sent (cross-site pages); every POST also
+        needs the per-launch token baked into the served pages. A custom
+        header cannot be sent cross-origin without a preflight, which this
+        server never grants, so a web page cannot start jobs here."""
+        import secrets
+        import txserver
+        if not txserver._host_ok(self):
+            self._send_json(403, {"error": "this server answers on the loopback address only"})
+            return True
+        origin = self.headers.get("Origin")
+        if origin is not None:
+            host = urlparse(origin).hostname or ""
+            if host not in ("127.0.0.1", "localhost", "::1"):
+                self._send_json(403, {"error": "cross-origin request refused"})
+                return True
+        if post and not secrets.compare_digest(self.headers.get("X-TX-Token", ""), txserver.TOKEN):
+            self._send_json(403, {"error": "missing or wrong X-TX-Token (reload the page)"})
+            return True
+        return False
+
     def do_GET(self):  # noqa: N802
         url = urlparse(self.path)
         path = url.path
+        if self._refuse(post=False):
+            return
+        if path == "/editor" or path.startswith("/tx/"):
+            import txserver  # translation editor: /editor page + /tx/* reads
+            if txserver.handle_get(self, path, url.query):
+                return
         if path in ("/", "/index.html"):
-            return self._send(200, INDEX_HTML, "text/html; charset=utf-8")
+            import txserver
+            return self._send(200, INDEX_HTML.replace("__TX_TOKEN__", txserver.TOKEN),
+                              "text/html; charset=utf-8")
         if path == "/detect":
             return self._send_json(200, {
                 "root": str(ROOT),
@@ -1898,8 +2008,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         url = urlparse(self.path)
         path = url.path
-        length = int(self.headers.get("Content-Length", "0") or 0)
-        body = self.rfile.read(length).decode("utf-8", errors="replace") if length else ""
+        import txserver
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+        except ValueError:
+            length = -1
+        # refuse on the headers alone, before a byte of the body is read
+        if length < 0 or length > txserver.MAX_BODY:
+            self.close_connection = True
+            return self._send_json(413, {"error": "bad or too large Content-Length"})
+        if self._refuse(post=True):
+            self.close_connection = True
+            return
+        raw = self.rfile.read(length) if length else b""
+        if path == "/editor" or path.startswith("/tx/"):
+            import txserver  # JSON bodies; token-checked there
+            if txserver.handle_post(self, path, raw, self.headers.get("Content-Type", "")):
+                return
+        body = raw.decode("utf-8", errors="replace")
         form = parse_qs(body, keep_blank_values=True)
         if path.startswith("/preview/"):
             return self._preview(unquote(path[len("/preview/"):]), form)

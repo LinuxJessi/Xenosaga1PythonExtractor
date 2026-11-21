@@ -32,6 +32,10 @@ from typing import List
 
 SECTOR = 2048
 FILLER = b"MONOLITHSOFT Xenosaga Episode.1\x00"
+# Xenosaga Episode I Reloaded (SLPS_290.05) was mastered with the Episode II
+# build pipeline: its chain-0 TOC (XENOSAGA.00) pads with "...Episode.2" while
+# its chain-1 TOC (XENOSAGA.10) keeps "...Episode.1". Accept either.
+FILLERS = (FILLER, b"MONOLITHSOFT Xenosaga Episode.2\x00")
 
 
 @dataclass(frozen=True)
@@ -63,9 +67,12 @@ def _is_filler(data: bytes, pos: int) -> bool:
     rest = data[pos:]
     if not rest:
         return True
-    phase = pos % len(FILLER)
-    want = (FILLER * (len(rest) // len(FILLER) + 2))[phase : phase + len(rest)]
-    return rest == want
+    for fill in FILLERS:
+        phase = pos % len(fill)
+        want = (fill * (len(rest) // len(fill) + 2))[phase : phase + len(rest)]
+        if rest == want:
+            return True
+    return False
 
 
 def parse_toc(data: bytes, source: str) -> List[TocEntry]:

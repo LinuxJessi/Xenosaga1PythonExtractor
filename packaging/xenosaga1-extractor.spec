@@ -48,6 +48,8 @@ DATAS = [
     (str(REPO / "README.md"), "."),
     (str(REPO / "LICENSE"), "."),
     (str(HERE / "tools" / "TOOLS.txt"), "tools"),
+    # translation editor: speaker names for the "By speaker" view (txspeakers.load)
+    (str(REPO / "txspeakers.json"), "."),
 ]
 DATAS = [(src, dst) for src, dst in DATAS if Path(src).exists()]
 
@@ -62,11 +64,42 @@ BINARIES = [(str(FFMPEG), "tools")] if FFMPEG.exists() else []
 # them keeps the bundle correct even if a future refactor imports them lazily.
 # repack/pinkhair/subs/ssd/ssd_render ARE imported lazily (inside cmd_patch/
 # cmd_pinkhair/cmd_subs_*/cmd_layer1_*/cmd_music_export), so their entries here
-# are load-bearing. ssd_render pulls numpy transitively (WAV/FLAC rendering);
-# without numpy in the build env music-export still emits MIDI + SoundFont.
+# are load-bearing. ssd_render imports numpy (the music renderer), a REQUIRED
+# package: the check below stops the build when it is missing. selftest.py
+# (cli.py self-test) imports every module of the kit by name, so each one is
+# listed here; build.py runs that self-test from the finished bundle.
 HIDDEN = ["arx", "browse", "carve", "chains", "evt", "iso9660", "toc",
           "repack", "pinkhair", "textpack", "subs", "ssd", "ssd_render",
-          "evttext", "font", "glyphs", "langpack"]
+          "evttext", "font", "glyphs", "langpack", "ovltext", "statfont",
+          # translation editor (txserver/txcatalog are imported by gui.py,
+          # txbuild by cli.py tx-build; the families by name via importlib)
+          "txcodec", "txcatalog", "txproject", "txserver", "txeditor_page",
+          "txbuild", "txfam_umn", "txfam_evt", "txfam_ovl", "txfam_fix", "pseudoloc",
+          "txtarget", "txlangs", "txsource", "txspeakers", "txbackup",
+          # self-test and the modules only it (or browse, lazily) imports
+          "selftest", "region", "lex", "evt_unpack", "class_map", "dump_symbols",
+          "numpy"]
+
+# fonttools + uharfbuzz draw new scripts' glyphs from TrueType fonts (txtarget,
+# glyphs, langpack, statfont, subs). They are REQUIRED kit packages, imported
+# lazily, so Analysis would not see them: collect them whole (uharfbuzz is a
+# compiled extension; fontTools loads its table modules by name). A build
+# environment without them is an error, not a smaller bundle.
+import importlib.util
+from PyInstaller.utils.hooks import collect_all
+
+if importlib.util.find_spec("numpy") is None:
+    raise SystemExit("numpy is not installed in the build environment: "
+                     "python -m pip install -r requirements.txt")
+
+for _pkg in ("fontTools", "uharfbuzz"):
+    if importlib.util.find_spec(_pkg) is None:
+        raise SystemExit(f"{_pkg} is not installed in the build environment: "
+                         f"python -m pip install -r requirements.txt")
+    _d, _b, _h = collect_all(_pkg)
+    DATAS += _d
+    BINARIES += _b
+    HIDDEN += _h
 
 
 def _ver(name):

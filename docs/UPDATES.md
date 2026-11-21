@@ -2,6 +2,115 @@
 
 Newest first: what changed, why, and what it means for you.
 
+## 2026-11-21 — the translation editor, and a guide anyone can follow
+
+**A translation editor in the app.** One page lists every string a
+translator might want (about 14,500 visible lines: dialogue, names,
+choices, U.M.N. mail, database and chat, items, skills, enemies, menus,
+battle words, cards, casino, battle quotes), sorted by where it appears
+in the game or by who says it. You type next to the English, each line
+is checked as you go and drawn with the game's own font, and **Build**
+writes a patched copy of the disc and reads every line back out of it.
+The retail image is only ever read. 382 languages are in the Language
+setup; letters the game's font lacks are drawn from a font on your
+computer, right-to-left scripts included. Projects are small JSON files
+with automatic backups and named checkpoints.
+
+**Start here:** [TRANSLATING.md](TRANSLATING.md) is a new step-by-step
+guide written for people who have never done this, with pictures, a
+table for every message you can meet and a list of the words used.
+[TRANSLATION-EDITOR.md](TRANSLATION-EDITOR.md) stays the full reference.
+
+**Length guides.** Most text has no hard limit on the disc, so nothing
+used to say when a translation was too long for its box. The checker
+now shows each translation's drawn length against the original, offers
+**Wrap to fit** when a line is wider than its box, and warns when a
+text is longer than anything the original game shows in that kind of
+box.
+
+**One project, one language.** A project's language is locked once it
+holds a translated line; another language is another project.
+
+**From an outside review of the editor's code** (GPT-6.2 Astra, each
+finding checked by hand before it was acted on): a finished build now
+replaces an existing output in one step instead of deleting it first;
+the build lock no longer probes the other process on Windows, where
+that probe is not harmless; `lang encode` refuses to write into its own
+input folder; Hanifi Rohingya is right-to-left; a language note with a
+`|` in it is no longer cut short; two display glitches (a stray "null"
+in the Language setup, a raw error list under the preview) are gone.
+Not yet fixed, and listed in the guide's known gaps: Persian text with
+the zero-width non-joiner is refused. Nothing built by the editor has
+been played through in the emulator yet; every build is verified by
+reading the disc back.
+
+## 2026-11-21 — `self-test`, `region`, required packages (the three-kit parity pass)
+
+The Episode II and III kits had three things this one lacked. They are
+here now, checked on the USA disc and on the Japanese *Reloaded* disc.
+
+**`python cli.py self-test [--iso GAME.iso] [--full]`**, and a **Check the
+kit** card in the app. Without a disc it checks that every module and the
+three required packages import, round-trips the codecs, and drives every
+route of the translation editor's server on a real socket (14 checks, a
+second or two). With a disc it re-proves, read-only, what the write path
+rests on: the tables of contents parse, the ARX compressor reproduces the
+disc's own compressed objects, both fonts and all dialogue containers
+rebuild to their retail bytes, and the editor's catalog loads (28 checks,
+about half a minute on the USA disc). `--full` recompresses every ARX
+object and builds the editor's patched clones in a scratch folder (31
+checks). `build.py` now runs the self-test from inside the bundle it just
+built.
+
+**`python cli.py region --iso GAME.iso`**, and a **Which disc is this?**
+card: the build, the executable's hash, whether its function names are
+intact, each chain's object count, and what the kit has been checked with
+on that build.
+
+**Packages are required, not optional.** `music-export` used to fall back
+to MIDI and SoundFont only when numpy was missing; an app user would have
+got the smaller result without being told. numpy now sits beside fontTools
+and uharfbuzz as a requirement everywhere: `requirements.txt`, the
+launchers, the PyInstaller spec, `build.py` (refuses to build without
+them) and the self-test (fails, does not skip).
+
+**Found on the way**
+
+* **The ARX count in the docs was out of date.** `--full` recompressed all
+  2,168 compressed objects of the USA disc: 2,165 come out byte-identical
+  and three small motion archives differ only in the order of equally
+  common words in the header table, at the same size, and decompress to
+  the same bytes (`chain1/mtnpack/SCE02004D.arc`, already documented, plus
+  `chain2/mtnpack/SCE03031B.arc` and `SCE03050C1.arc`). The "2,094 of
+  2,095" in FORMATS.md and MODDING.md was counted before chain 2 was
+  found; both pages now give the full figure.
+* **The Japanese *Reloaded* disc reads.** `list`, `extract`, `text-export`
+  (604 `.txt` + 326 `.uml`), `evt-export` (52,706 strings in 568
+  containers), `ovl-export` (6,001 strings) and `font-extract` all run on
+  SLPS_290.05, and the read-only self-test passes on it (23 checks; the
+  translation editor's disc checks are skipped there, since its rows are
+  keyed to the USA disc). The README no longer says other discs are
+  untested. Nothing written from that disc has been booted.
+* **The release workflow installed only numpy.** With fontTools and
+  uharfbuzz required by the spec, the next tagged build would have stopped
+  at "not installed in the build environment". It now installs
+  `requirements.txt`.
+* `cli.py` prints UTF-8 on any console code page (the Episode II kit's
+  first Windows build crashed on a cp1252 console).
+* New page: [MODELS.md](MODELS.md), the counterpart of the other kits'.
+
+**Checked how.** `self-test` from source with and without the USA image and
+with `--full`; on the *Reloaded* image; and from a bundle built with
+PyInstaller on macOS into a scratch folder (`xeno-cli self-test`: 14 of 14).
+The Windows bundle has not been built with these changes.
+
+**Still behind the other kits:** dialogue in play order (Episode II has
+it), a text-coverage report, a general texture importer (here only the
+hair recolour writes textures), motion (the FCV clips are located, their
+keys not decoded), and the right-to-left ordering of mixed lines, which
+Episode III's kit does by the Unicode algorithm and this one by a simpler
+run rule.
+
 ## 2026-10-15, later — the movie band is a black bar; the encoder spends the whole slot
 
 Two things the first captures showed. The re-encoded movie was blocky:

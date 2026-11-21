@@ -67,6 +67,12 @@ class IsoImage:
             self.layer2_volume_sectors = struct.unpack_from("<I", pvd2, 80)[0]
             r_lba = struct.unpack_from("<I", pvd2, 158)[0]
             r_len = struct.unpack_from("<I", pvd2, 166)[0]
+            if r_len == 0:
+                # Xenosaga I Reloaded (SLPS_290.05) masters its layer-1 root
+                # record (and the root's own "." record) with data length 0;
+                # the firmware's sceCdLayerSearchFile copes, and all records
+                # (".", "..", XENOSAGA.20-.24) fit in one sector.
+                r_len = SECTOR
             for f in self._walk(base + r_lba, r_len, "", base=base, layer=1):
                 self.files.setdefault(f.path, f)
 

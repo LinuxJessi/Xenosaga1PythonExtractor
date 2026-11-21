@@ -96,11 +96,14 @@ page and double-click it. Nothing to install.
 | Windows | `Xenosaga-I-Extractor-windows/Xenosaga-I-Extractor.exe` |
 | macOS | `Xenosaga-I-Extractor.app` (first time: right-click ▸ Open, because of Gatekeeper) |
 
-**From a source checkout** (Python 3.9 or newer, no packages to
-install): double-click `launch.bat` (Windows), `launch.command` (macOS)
+**From a source checkout** (Python 3.9 or newer; the launchers install
+the three packages in `requirements.txt` the first time): double-click `launch.bat` (Windows), `launch.command` (macOS)
 or `launch.sh` (Linux), or run `python gui.py`. The app opens as a page
 in your browser, finds your disc image, and shows one card per job
-with a live log.
+with a live log. The **Translation editor** button in its header opens
+a second page listing every string of the game by type, for typing or
+pasting a translation and building a patched disc in one click
+(start with [docs/TRANSLATING.md](docs/TRANSLATING.md)).
 
 **From a terminal:**
 
@@ -178,6 +181,17 @@ and all 103 voice streams, comes from your own disc.
 The kit is built to carry a fan translation end to end, and the
 pipeline has been proven in-game.
 
+* **The translation editor.** The easy way, for any language (382 are
+  listed, from French to Cherokee): every string on the disc in one
+  page, sorted by type, with accents encoded for you, letters the game
+  lacks drawn from a font on your computer, checks and length guides as
+  you type, previews in the game's font, automatic backups, and one
+  Build button. No programming needed. **Start here:**
+  [docs/TRANSLATING.md](docs/TRANSLATING.md), a step-by-step guide for
+  beginners; the full reference is
+  [docs/TRANSLATION-EDITOR.md](docs/TRANSLATION-EDITOR.md).
+
+  ![The translation editor: places in the game, the English lines, and a translation with its preview in the game's font](docs/images/editor-translating.png)
 * **Menus, text boxes and mails.** `text-export` writes all 914 text
   objects as plain UTF-8 files, one per object, each marked with how
   many bytes it may use. Edit them in anything. `text-import` checks
@@ -246,18 +260,25 @@ The disc also shipped eight developers' personal working folders;
 [docs/FINDS.md](docs/FINDS.md) and [docs/HISTORY.md](docs/HISTORY.md)
 have those stories.
 
-The Japanese release is expected to work (nothing is tied to the USA
-serial) but has not been tested on a real JP disc. If something breaks,
-please open an issue with the exact error.
+**Other discs.** `python cli.py region --iso GAME.iso` says which build an
+image is and what the kit has been checked with on it. Nothing in the
+reading stack is tied to the USA serial: the Japanese *Xenosaga Episode I
+Reloaded* disc (SLPS_290.05) lists, extracts and exports its text, fonts and
+dialogue, and it is the translation editor's Japanese source. The writing
+tools were proven on the USA disc; no disc written from another build has
+been booted, and the 2002 Japanese original has not been run through the kit
+at all. If something breaks, please open an issue with the exact error.
 
 ## Docs
 
 | Read this | When you want to |
 |---|---|
 | [BROWSING.md](docs/BROWSING.md) | know what is in the output and where to look first |
-| [BLENDER.md](docs/BLENDER.md) | bring the models into Blender |
+| [BLENDER.md](docs/BLENDER.md), [MODELS.md](docs/MODELS.md) | bring the models into Blender; see how models and skeletons are decoded and what is still open |
 | [MODDING.md](docs/MODDING.md) | change the game: patching, recolours, translation, verification |
 | [SUBTITLES.md](docs/SUBTITLES.md) | add subtitles to the cutscenes |
+| [TRANSLATING.md](docs/TRANSLATING.md) | **translate the game into your language, step by step, no programming** |
+| [TRANSLATION-EDITOR.md](docs/TRANSLATION-EDITOR.md) | look up every detail of the translation editor |
 | [FRENCH-TRANSLATION-GUIDE.md](docs/FRENCH-TRANSLATION-GUIDE.md), [SCRIPTS.md](docs/SCRIPTS.md), [ARABIC-TRANSLATION-SPEC.md](docs/ARABIC-TRANSLATION-SPEC.md) | translate the game, step by step; into other alphabets |
 | [MUSIC.md](docs/MUSIC.md) | understand and render the soundtrack |
 | [JAVA.md](docs/JAVA.md) | read the cutscene scripts |
@@ -268,8 +289,12 @@ please open an issue with the exact error.
 
 ## Building the app yourself
 
-`python build.py` (needs `pip install pyinstaller`) makes the
-self-contained bundle. Build on Windows for the `.exe` and on macOS for
+`python build.py` (needs `pip install pyinstaller` and the three packages
+in `requirements.txt`) makes the self-contained bundle and then runs the
+bundle's own `self-test`, so a build that is missing a module fails on your
+machine and not on someone else's. `python cli.py self-test` runs the same
+checks from source; with `--iso GAME.iso` it also re-proves, read-only, that
+the kit's compressor, fonts and dialogue rebuild your disc's own bytes. Build on Windows for the `.exe` and on macOS for
 the `.app`; the GitHub Actions workflow builds both when a version tag
 is pushed.
 

@@ -165,10 +165,10 @@ def grid_png(canvas, clen, path, mark: Optional[Dict[int, str]] = None) -> None:
 class CellRenderer:
     def __init__(self, font, px: float = 13.0, baseline: int = 13, face_index: int = 0,
                  script: Optional[str] = None, language: Optional[str] = None,
-                 rtl: bool = False, supersample: int = 4):
+                 rtl: bool = False, supersample: int = 4, xscale: float = 1.0):
         from glyphs import TTFRenderer
         self.r = TTFRenderer(font, px=px, face_index=face_index, features=None,
-                             supersample=supersample)
+                             supersample=supersample, xscale=xscale)
         self.px, self.baseline, self.ss = px, baseline, supersample
         self.script, self.language, self.rtl = script, language, rtl
 
@@ -182,7 +182,7 @@ class CellRenderer:
         edges = []
         for gid, dx, dy in parts:
             for contour in r.contours(gid):
-                pts = [((1.0 + dx + x * r.scale) * ss, (self.baseline - dy - y * r.scale) * ss)
+                pts = [((1.0 + dx + x * r.sx) * ss, (self.baseline - dy - y * r.scale) * ss)
                        for x, y in contour]
                 for i in range(len(pts)):
                     x0, y0 = pts[i]
@@ -214,6 +214,41 @@ class CellRenderer:
         return rows
 
 
+def cell_clusters(glyphs, sx: float, scale: float) -> List[Tuple[Tuple[int, ...], List[Tuple[int, float, float]], float]]:
+    """Group HarfBuzz output into battle-grid cells: one cell per HarfBuzz
+    cluster (consecutive glyphs with the same cluster id), in the visual
+    order HarfBuzz returns. -> [(glyph ids, parts, advance in font units)],
+    parts = [(gid, dx_px, dy_px)] measured from the pen position of the
+    cluster's leftmost advancing glyph (its base), so a mark or dot is drawn
+    over its own base whichever side of it HarfBuzz put it (a right-to-left
+    run lists a cluster's zero-advance marks before the base; grouping by
+    "zero advance joins the previous glyph" moved them onto the neighbour)."""
+    groups: List[list] = []
+    for g in glyphs:
+        if groups and groups[-1][0][1] == g[1]:
+            groups[-1].append(g)
+        else:
+            groups.append([g])
+    out = []
+    pen = 0.0
+    for grp in groups:
+        starts, p = [], pen
+        for g in grp:
+            starts.append(p)
+            p += g[2]
+        bases = [s for s, g in zip(starts, grp) if g[2]]
+        origin = min(bases) if bases else pen
+        parts = [(gid, (s + xo - origin) * sx, yo * scale)
+                 for s, (gid, _cl, _adv, xo, yo) in zip(starts, grp)]
+        out.append((tuple(g[0] for g in grp), parts, p - pen))
+        pen = p
+    return out
+
+
+def cluster_key(gids) -> str:
+    return "g:" + ":".join(str(g) for g in gids)
+
+
 def _is_target(ch: str) -> bool:
     o = ord(ch)
     return o >= 0x80 and not (0x3000 <= o <= 0x30FF or 0x4E00 <= o <= 0x9FFF or 0xFF00 <= o <= 0xFFEF)
@@ -243,21 +278,8 @@ def collect(tree: Path, cr: CellRenderer) -> Dict[str, Tuple[List[Tuple[int, flo
                 if not any(_is_target(c) for c in w):
                     continue
                 run = "".join(c for c in w if _is_target(c))
-                glyphs = cr.shape(run)
-                cluster: list = []
-                base = None
-                for gid, cl, adv, xo, yo in glyphs:
-                    if adv == 0 and cluster:                 # mark: attach to the base cell
-                        cluster.append((gid, xo * cr.r.scale, yo * cr.r.scale))
-                        continue
-                    if cluster:
-                        key = "g:" + ":".join(str(g) for g, _, _ in cluster)
-                        keys.setdefault(key, (cluster, base))
-                    cluster = [(gid, xo * cr.r.scale, yo * cr.r.scale)]
-                    base = adv
-                if cluster:
-                    key = "g:" + ":".join(str(g) for g, _, _ in cluster)
-                    keys.setdefault(key, (cluster, base))
+                for gids, parts, adv in cell_clusters(cr.shape(run), cr.r.sx, cr.r.scale):
+                    keys.setdefault(cluster_key(gids), (parts, adv))
     return keys
 
 
@@ -307,7 +329,7 @@ def cmd_scan(a) -> int:
         mapping[key] = idx
         codes[key] = pool.pop(0)
         rows = cr.raster(parts)
-        if adv and adv * cr.r.scale > CELL_W:
+        if adv and adv * cr.r.sx > CELL_W:
             wide += 1
         write_cell(canvas, clen, idx, rows)
     new = xtx_store(data, canvas, subs)
@@ -356,29 +378,21 @@ class Encoder:
             while j < len(w) and _is_target(w[j]):
                 j += 1
             run = w[i:j]
-            glyphs = self.cr.shape(run)
-            cluster: list = []
             codes = []
-            def flush():
-                if cluster:
-                    key = "g:" + ":".join(str(g) for g in cluster)
-                    idx = self.m.get(key)
-                    if idx is None:
-                        self.missing.append(run)
-                        codes.append("?")
-                    elif not self.escape and key in self.codes:
-                        codes.append(_byte_text(self.codes[key]))
-                    else:
-                        codes.append(f"#{idx:02X}")
-            for gid, cl, adv, xo, yo in glyphs:
-                if adv == 0 and cluster:
-                    cluster.append(gid)
-                    continue
-                flush()
-                cluster = [gid]
-            flush()
-            if self.cr.rtl:
-                codes.reverse()
+            for gids, _parts, _adv in cell_clusters(self.cr.shape(run), self.cr.r.sx,
+                                                    self.cr.r.scale):
+                key = cluster_key(gids)
+                idx = self.m.get(key)
+                if idx is None:
+                    self.missing.append(run)
+                    codes.append("?")
+                elif not self.escape and key in self.codes:
+                    codes.append(_byte_text(self.codes[key]))
+                else:
+                    codes.append(f"#{idx:02X}")
+            # HarfBuzz already returns a right-to-left run in visual order
+            # (left to right on screen), which is the order the printer draws;
+            # reversing it here drew Arabic/Hebrew labels backwards
             out.append("".join(codes))
             i = j
         return "".join(out)

@@ -22,9 +22,9 @@ presentation form, a syllable), ``g:<font>:<gid>`` for one glyph id and
 
 Bitmaps come from one of two sources:
 
-1. A TrueType/OpenType font, rasterised here (``TTFRenderer``). Needs the
-   optional ``fonttools`` (outlines) and ``uharfbuzz`` (shaping) packages:
-   ``pip install fonttools uharfbuzz``. Everything else — the scanline
+1. A TrueType/OpenType font, rasterised here (``TTFRenderer``). Needs
+   ``fonttools`` (outlines) and ``uharfbuzz`` (shaping), required kit
+   packages (requirements.txt; the launchers install them). Everything else — the scanline
    rasteriser, quantisation, cell packing — is standard library, like the
    rest of the kit.
 2. A PNG sheet of hand-drawn 20x24 cells plus a key list (``from_png``),
@@ -61,9 +61,21 @@ def code_of_wide_cell(cell: int) -> int:
     return ((0xB0 + n // 94) << 8) | (0xA1 + n % 94)
 
 
+# Proportional slots retail USA text draws OUTSIDE the ASCII table: the
+# #XX / raw-code accent and symbol cells (ä ê é — ™ © ® ß … · ç ...) and the
+# JIS codes the printer maps into the block (A1A5 ・ -> slot 10; A7A1/A7A3/
+# A7A6, Cyrillic А В Е, -> slots 64-66). Measured over every string the four
+# translation-editor families show from the USA disc (``txtarget.retail_usage``;
+# its selftest re-measures and compares). A new script must not take these,
+# or untranslated English lines would draw its letters.
+RETAIL_PROP_SLOTS = frozenset({10, 64, 65, 66, 77, 102, 107, 113, 115, 130, 147, 167, 168,
+                               169, 195, 199})
+
+
 def reserved_prop_slots(keep_latin: bool = True) -> set:
-    """Slots the retail English text draws from (via the engine's ASCII table)."""
-    keep = set()
+    """Slots the retail English text draws from: the engine's ASCII table
+    (A-Z/a-z only with ``keep_latin``) plus RETAIL_PROP_SLOTS."""
+    keep = set(RETAIL_PROP_SLOTS)
     for ch in range(0x20, 0x7F):
         if not keep_latin and (0x41 <= ch <= 0x5A or 0x61 <= ch <= 0x7A):
             continue
@@ -120,15 +132,23 @@ class GlyphSet:
         self.glyphs[g.key] = g
 
     def allocate(self, order: Sequence[str], keep_latin: bool = True,
-                 prop_only: bool = False, wide_only: bool = False) -> None:
+                 prop_only: bool = False, wide_only: bool = False,
+                 reserved_prop: Iterable[int] = (), reserved_wide: Iterable[int] = (),
+                 wide_from_end: bool = False) -> None:
         """Give every key in ``order`` (most frequent first) a slot: free
         proportional slots first, then kanji cells. Keys already placed keep
-        their place."""
-        used_prop = reserved_prop_slots(keep_latin) | {
+        their place. ``reserved_prop`` / ``reserved_wide`` are slots / cells
+        still in use (accent letters a translation keeps, kanji it draws
+        natively) on top of reserved_prop_slots; ``wide_from_end`` hands out
+        kanji cells from the last row backwards (the rarest level-1 kanji)."""
+        used_prop = reserved_prop_slots(keep_latin) | set(reserved_prop) | {
             v["slot"] for v in self.slots.values() if v["tier"] == "prop"}
-        used_wide = {v["cell"] for v in self.slots.values() if v["tier"] == "wide"}
+        used_wide = set(reserved_wide) | {
+            v["cell"] for v in self.slots.values() if v["tier"] == "wide"}
         free_prop = [p for p in range(PROP_SLOTS) if p not in used_prop]
         free_wide = [c for c in range(WIDE_FIRST, WIDE_LAST + 1) if c not in used_wide]
+        if wide_from_end:
+            free_wide.reverse()
         for key in order:
             if key in self.slots:
                 continue
@@ -231,7 +251,7 @@ def from_png(png_path, keys: Iterable[str], source: str = "") -> GlyphSet:
     return gs
 
 
-# --- TrueType rendering (optional fonttools + uharfbuzz) ---------------------------
+# --- TrueType rendering (fonttools + uharfbuzz) -------------------------------------
 
 class TTFRenderer:
     """Shape text with HarfBuzz and rasterise glyph outlines into cells.
@@ -243,13 +263,14 @@ class TTFRenderer:
 
     def __init__(self, path, px: float = 20.0, baseline: int = 17,
                  face_index: int = 0, features: Optional[dict] = None,
-                 supersample: int = 4):
+                 supersample: int = 4, xscale: float = 1.0):
         try:
             from fontTools.ttLib import TTFont, TTCollection
             import uharfbuzz as hb
         except ImportError as ex:   # pragma: no cover
-            raise GlyphError("TrueType rendering needs the optional packages: "
-                             "pip install fonttools uharfbuzz") from ex
+            raise GlyphError("TrueType rendering needs the kit's fonttools and uharfbuzz "
+                             "packages (requirements.txt; the launcher installs them): "
+                             "python3 -m pip install --user -r requirements.txt") from ex
         self.hb = hb
         p = Path(path)
         data = p.read_bytes()
@@ -271,6 +292,11 @@ class TTFRenderer:
         self.ss = supersample
         self.name = p.stem
         self.scale = px / self.upem
+        # horizontal squeeze: the retail Latin is condensed (an H is 7 px wide
+        # and 15 px tall), so a TrueType face drawn at xscale 1 looks twice as
+        # wide as the English around it. ``sx`` is the x scale in px/unit.
+        self.xscale = xscale
+        self.sx = self.scale * xscale
 
     # shaping
     def shape(self, text: str, direction: str = "ltr", script: Optional[str] = None,
@@ -293,7 +319,7 @@ class TTFRenderer:
         return self.glyph_order[gid]
 
     def advance_px(self, gid: int) -> float:
-        return self.hbfont.get_glyph_h_advance(gid) * self.scale
+        return self.hbfont.get_glyph_h_advance(gid) * self.sx
 
     # outlines
     def contours(self, gid: int) -> List[List[Tuple[float, float]]]:
@@ -362,7 +388,7 @@ class TTFRenderer:
         edges = []
         for gid, dx, dy in placements:
             for contour in self.contours(gid):
-                pts = [((x_origin + dx + x * self.scale) * ss,
+                pts = [((x_origin + dx + x * self.sx) * ss,
                         (self.baseline - dy - y * self.scale) * ss) for x, y in contour]
                 for i in range(len(pts)):
                     x0, y0 = pts[i]
@@ -401,6 +427,6 @@ class TTFRenderer:
         pen = 0.0
         parts = []
         for gid, _, adv, xo, yo in self.shape(text, direction, script):
-            parts.append((gid, (pen + xo) * self.scale, yo * self.scale))
+            parts.append((gid, (pen + xo) * self.sx, yo * self.scale))
             pen += adv
-        return Glyph(key, self.raster(parts), round(pen * self.scale))
+        return Glyph(key, self.raster(parts), round(pen * self.sx))

@@ -122,10 +122,12 @@ def _load_chain(mm, iso, chain):
 
 def _allocation(entry: TocEntry, entries: List[TocEntry], total: int) -> int:
     start = entry.byte_offset
+    if start >= total:
+        # already relocated past the chain: relocations of ALL chains are
+        # appended there interleaved, so only its own sectors are known free
+        return (entry.size + SECTOR - 1) // SECTOR * SECTOR
     following = [e.byte_offset for e in entries if e.byte_offset > start]
     end = min(following) if following else total
-    if start >= total:                     # already relocated past the chain
-        return max(end - start, (entry.size + SECTOR - 1) // SECTOR * SECTOR)
     return end - start
 
 

@@ -113,11 +113,22 @@ give it its own glyphset run). Overlay strings may be any length:
 `ovl-import --grow` appends the long ones to the end of the overlay and
 repoints every pointer and `lui`/`addiu` pair, and moves the overlay to
 the end of the image if the next file leaves no room (OV01 has 870 bytes
-of slack). The boot executable is in place only: its bss follows the
-data, so a string there must fit its slot (up to the next non-zero
-byte); the importer says which do not. A `lui` shared by several
-addresses whose high half would have to change is reported, not
-patched. See FORMATS.md § Code overlays for what is going on.
+of slack). The boot executable's strings may be any length too, by
+another route: its bss follows its data, so nothing can be appended
+there, and `--grow` gives the long strings a load segment of their own
+at 0x9B8000, in memory between the end of the C heap and the overlays
+that the game never uses (up to 0x9FF000, 284 KB). The first 3.8 KB of
+them sit in the padding after the ELF's program headers and the file
+keeps its size; past that they go to the end of the file and the
+executable to the end of the image. Without `--grow` a string must fit
+its slot (up to the next non-zero byte) and the importer says which do
+not. A `lui` shared by several addresses whose high half would have to
+change is reported, not patched (101 of the boot executable's 4,252
+strings are in that position and stay slot-bound). A moved string keeps
+its old bytes where they were and gets a new `@address` in the next
+export, so import a tree keyed by retail addresses with
+`--retail GAME.iso`, as for the overlays. See FORMATS.md § Code overlays
+for what is going on.
 
 ## 2c. The battle screen: its own font
 
@@ -155,6 +166,39 @@ already rewritten. Short labels only: a 10 px cell will not hold a
 Devanagari conjunct or an Arabic ligature legibly, the bars are about
 16 cells wide, and 56 letters is the table's limit (Georgian's 33 fit;
 Cyrillic's 66 do not all, so a translation mixes the two methods).
+
+### 2d. Testing a whole script before you translate: `pseudoloc.py`
+
+`pseudoloc.py` respells the English of an `ovl-export` tree phonetically in
+Cherokee syllabary (not a translation: a fixture). Run `lang scan --script
+Cher`, `lang encode` and `ovl-import --grow --skip-unfit` on it and every
+menu label, help line and sub-menu title comes out in glyphs the game's font
+never had, at about the length of a real translation.
+
+```sh
+python pseudoloc.py --text tr/exe --out tr/pseudo --from 4c3380 --to 4cc000
+python cli.py lang scan   --iso GAME.iso --text tr/pseudo --font PlantagenetCherokee.ttf --script Cher --language chr --px 18 --out tr/font
+python cli.py lang encode --text tr/pseudo --glyphset tr/font/glyphset.json --out tr/pseudo-enc
+python cli.py ovl-import  --iso GAME.iso --text tr/pseudo-enc --out TEST.iso --grow --skip-unfit
+python cli.py patch --iso TEST.iso --out TEST.iso --set chain0:font0.tex=tr/font/font0.tex --set chain0:font1.tex=tr/font/font1.tex
+```
+
+`--skip-unfit` writes every string that fits and lists the others as
+`skipped @address: why` (a `lui` shared with another string, no room)
+instead of refusing the whole import.
+
+Seen on PCSX2 (2026-11-20, Cherokee): the field menu list, every help line,
+the Items/Ether/Characters/Tech Attack/Skills titles and the item-category
+sheets draw through the proportional font, with the boot executable's
+strings moved by `--grow` (§ 2b).
+
+**Known limit: window title ribbons.** The small titles on ribbons ("Menu",
+"Combatant", "Set Skills", the SetList headers, Reserve) are drawn by
+`PrintTagFont`, a sprite-letter font that takes ASCII only; any other
+script there draws as `A` per byte, and `lang scan --wide-only` does not
+change that. Leave those strings in English until the tag font gets a tool
+like `statfont` (a glyph sheet plus its UV table). `pseudoloc.py` skips them
+(`EXCLUDE`).
 
 ## 3. Encode the text
 

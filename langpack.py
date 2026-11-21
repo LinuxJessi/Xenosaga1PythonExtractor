@@ -176,9 +176,9 @@ class HBShaper:
             pen = 0.0
             parts = []
             for gid, _, adv, xo, yo in grp:
-                parts.append((gid, (pen + xo) * r.scale, yo * r.scale))
+                parts.append((gid, (pen + xo) * r.sx, yo * r.scale))
                 pen += adv
-            if pen * r.scale <= self.max_cluster:
+            if pen * r.sx <= self.max_cluster:
                 key = "c:%s:%s" % (r.name, ";".join(
                     f"{gid}@{dx:.1f},{dy:.1f}" for gid, dx, dy in parts))
                 self._parts[key] = parts
@@ -205,19 +205,19 @@ class HBShaper:
 
 # --- the encoder ---------------------------------------------------------------
 
-def _char_class(c: str, keep_latin: bool) -> str:
+def _char_class(c: str, keep_latin: bool, native=None) -> str:
     o = ord(c)
     if o < 0x80:
         if not keep_latin:
             return "x"
         return "a" if c.isalnum() else "p"
-    return "n" if _is_native(c) else "s"
+    return "n" if (native or _is_native)(c) else "s"
 
 
-def _runs(tok: str, keep_latin: bool) -> List[str]:
+def _runs(tok: str, keep_latin: bool, native=None) -> List[str]:
     out, cur, cls = [], "", None
     for c in tok:
-        k = _char_class(c, keep_latin)
+        k = _char_class(c, keep_latin, native)
         if k != cls and cur:
             out.append(cur)
             cur = ""
@@ -254,9 +254,19 @@ def _is_native(s: str) -> bool:
 
 
 class Encoder:
+    """``native`` (optional) decides which non-ASCII characters the disc's
+    font already draws and are passed through as text instead of shaped
+    (default ``_is_native``: kana, kanji, full-width forms, box drawing);
+    ``native_width(run) -> px`` measures such a run (default 20 px a char).
+    The translation editor's build (txtarget) passes the retail font's real
+    coverage: the accent block, every JIS X 0208 code the font draws."""
+
     def __init__(self, glyphset: GlyphSet, shaper, font0: Font, rtl: bool,
                  keep_latin: bool = True, width: int = 0, align: str = "left",
-                 space_px: int = DEFAULT_SPACE_PX, collect: bool = False):
+                 space_px: int = DEFAULT_SPACE_PX, collect: bool = False,
+                 native=None, native_width=None):
+        self.native = native or _is_native
+        self.native_width = native_width or (lambda run: 20 * len(run))
         self.gs = glyphset
         self.shaper = shaper
         self.font = font0
@@ -298,7 +308,7 @@ class Encoder:
                 # script — so a Hebrew prefix glued to a Latin name, brackets
                 # around a number, or a ■ bullet before a word each get the
                 # right treatment
-                for part in _runs(tok, self.keep_latin):
+                for part in _runs(tok, self.keep_latin, self.native):
                     items.append(self._word(part, pending_ctrl))
                     pending_ctrl = ""
             pending_ctrl = ""
@@ -317,8 +327,11 @@ class Encoder:
         d = _direction(tok)
         if _is_ascii(tok) and self.keep_latin:
             return ("ascii", tok, d, self._ascii_width(tok), ctrl)
-        if _is_native(tok):
-            return ("ascii", tok, "L", 20 * len(tok), ctrl)
+        if all(self.native(c) for c in tok):
+            # (a custom ``native`` keeps the run's own direction, so « … — stay
+            # neutral inside right-to-left text; the default forces L as before)
+            return ("ascii", tok, "L" if self.native is _is_native else d,
+                    self.native_width(tok), ctrl)
         keys = self.shaper.keys(tok, d == "R")
         if self.collect:
             self.counts.update(keys)
@@ -481,7 +494,7 @@ def _make_shaper(cfg: dict):
     if cfg.get("ttf"):
         from glyphs import TTFRenderer
         r = TTFRenderer(cfg["ttf"], cfg.get("px", 20.0), cfg.get("baseline", 17),
-                        cfg.get("face", 0))
+                        cfg.get("face", 0), xscale=cfg.get("xscale", 1.0))
         return HBShaper(r, cfg.get("script"), cfg.get("language"))
     return SimpleShaper(bool(cfg.get("rtl")))
 
@@ -549,6 +562,8 @@ def cmd_encode(a) -> int:
     enc = Encoder(gs, shaper, f0, rtl, keep_latin=cfg.get("keep_latin", True),
                   width=a.width, align=a.align, space_px=a.space_px)
     src, dst = Path(a.text), Path(a.out)
+    if dst.resolve() == src.resolve() or src.resolve() in dst.resolve().parents:
+        raise SystemExit("--out must be a different folder, outside --text: encoding in place would overwrite the translation")
     n = 0
     for p in _iter_tree(src):
         rel = p.relative_to(src)

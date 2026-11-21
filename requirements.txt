@@ -1,11 +1,22 @@
-# Runtime dependencies for the Xenosaga I extractor kit.
-# The core extract/repack/text/movie pipeline is pure stdlib (+ a bundled
-# ffmpeg for movie/audio conversion — see packaging/). numpy is needed only
-# for `cli.py music-export` WAV/FLAC rendering (ssd_render.py); without it,
-# music-export still emits MIDI + SoundFont2.
+# Runtime dependencies for the Xenosaga I extractor kit. All of them are
+# REQUIRED: the app bundles carry them, the launchers (launch.command,
+# launch.bat, launch.sh) install them when the Python they find lacks any,
+# build.py refuses to build without them, and `python cli.py self-test` fails
+# (it does not skip) when one cannot be imported. No command falls back to a
+# worse path when one is missing.
+#
+#   python -m pip install -r requirements.txt
+#
+# Everything else (disc reading, ARX, textures, models, text, write-back) is
+# the Python standard library, 3.9 or newer. ffmpeg (movies, FLAC) is a
+# program, bundled under tools/ in the app; see packaging/.
+#
+# The music renderer (ssd_render.py: `cli.py music-export`, WAV/FLAC):
 numpy>=1.24
-# Optional, only for translations into scripts the disc's font never had
-# (`cli.py lang scan`, glyphs.py): HarfBuzz shaping and TrueType outlines.
-# Without them the hand-drawn PNG cell sheet path still works.
-# fonttools>=4.40
-# uharfbuzz>=0.37
+# Required for translations into letters the disc's fonts never had (the
+# translation editor's new-script targets, txtarget.py; `cli.py lang scan`,
+# statfont, subtitle burning): TrueType outlines and HarfBuzz shaping. The
+# launchers install everything in this file when it is missing, and the
+# PyInstaller build bundles both.
+fonttools>=4.40
+uharfbuzz>=0.37

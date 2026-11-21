@@ -17,9 +17,13 @@ Usage:
     python cli.py pinkhair --iso GAME.iso --out PINK.iso [--hue 0.92] [--dry-run]
     python cli.py text-export --iso GAME.iso --out TEXTDIR
     python cli.py text-import --iso GAME.iso --text TEXTDIR --out MODDED.iso
+    python cli.py tx-catalog --iso GAME.iso --out CATALOG.json
+    python cli.py tx-build --project P.json --retail GAME.iso --out FR.iso [--overwrite]
     python cli.py subs-template --src MOVIE.pss --out MOVIE.srt [--cue-seconds 5]
     python cli.py subs-burn --src MOVIE.pss --srt MOVIE.srt --out MOVIE.dub.pss
                             [--max-bytes N]
+    python cli.py region --iso GAME.iso          # which build, what was checked on it
+    python cli.py self-test [--iso GAME.iso] [--full]
     python cli.py layer1-list  --iso GAME.iso
     python cli.py layer1-patch --iso GAME.iso --out MODDED.iso
                                (--index N | --name layer1_045_lba....pss) --file NEW.pss
@@ -345,13 +349,37 @@ def cmd_ovl_export(args) -> int:
 def cmd_ovl_import(args) -> int:
     from ovltext import import_strings
 
-    return import_strings(args.iso, args.text, args.out, args.grow, args.retail)
+    return import_strings(args.iso, args.text, args.out, args.grow, args.retail,
+                          getattr(args, "skip_unfit", False))
 
 
 def cmd_statfont(args) -> int:
     from statfont import main as statfont_main
 
     return statfont_main([args.statfont_cmd, *args.rest])
+
+
+def cmd_tx_build(args) -> int:
+    import txbuild
+
+    try:
+        txbuild.build(args.project, args.retail, args.out, overwrite=args.overwrite)
+    except (txbuild.tc.TxBuildError, ValueError) as e:   # BuildError, ProjectError, codec
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_tx_catalog(args) -> int:
+    import json
+    import txcatalog
+
+    cat = txcatalog.build_catalog(args.iso)
+    Path(args.out).write_text(json.dumps(cat, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"wrote {len(cat['rows'])} rows in {len(cat['cats'])} categories to {args.out}")
+    for note in cat["notes"]:
+        print(f"note: {note}")
+    return 0
 
 
 def cmd_font_extract(args) -> int:
@@ -478,55 +506,47 @@ def cmd_layer1_patch(args) -> int:
 
 
 def cmd_music_export(args) -> int:
-    """Sequenced BGM -> .mid + .sf2 (+ .wav/.flac when numpy is present)."""
-    import ssd
-
+    """Sequenced BGM -> .mid + .sf2 + .wav (+ .flac with ffmpeg). numpy is a
+    requirement of the kit (requirements.txt): there is no MIDI-only path."""
     dump, out = Path(args.dump), Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
     try:
         import ssd_render
-    except ImportError:
-        ssd_render = None
-        print("numpy not available: writing MIDI + SoundFont only", file=sys.stderr)
-    if ssd_render is not None:
-        from browse import detect_ffmpeg
+    except ImportError as e:
+        print(f"music-export needs the kit's requirements ({e}).\n"
+              "  python -m pip install -r requirements.txt", file=sys.stderr)
+        return 2
+    from browse import detect_ffmpeg
 
-        ssd_render.export_all(dump, out, detect_ffmpeg())
-        return 0
-    banks = []
-    for p in sorted(dump.rglob("*.SWD")) + sorted(dump.rglob("*.SED")):
-        b = ssd.parse_bank(p.read_bytes(), p.stem)
-        if b and b.programs:
-            banks.append((p, b))
-    def match_bank(p, seq):
-        used = seq.used_programs() or {0}
-        for bp, b in banks:                       # exact stem match wins
-            if bp.stem.lower() == p.stem.lower():
-                return b
-        best, best_cov = None, 0.0
-        for bp, b in banks:                       # else best program coverage
-            cov = len(used & set(b.programs)) / len(used)
-            if cov > best_cov:
-                best, best_cov = b, cov
-        return best
-    for p in sorted(dump.rglob("*.SMD")) + sorted(dump.rglob("*.smd")):
-        data = p.read_bytes()
-        if len(data) < 5000:
-            continue
-        seq = ssd.parse_sequence(data, p.stem)
-        if not seq:
-            continue
-        bank = match_bank(p, seq)
-        if bank is None:
-            print(f"  {p.stem}: no matching bank, skipped", file=sys.stderr)
-            continue
-        (out / f"{p.stem}.mid").write_bytes(ssd.sequence_to_midi(seq))
-        (out / f"{p.stem}.sf2").write_bytes(ssd.bank_to_sf2(bank, p.stem))
-        print(f"  {p.stem} ({seq.title!r})")
+    out.mkdir(parents=True, exist_ok=True)
+    ssd_render.export_all(dump, out, detect_ffmpeg())
     return 0
 
 
+def cmd_region(args) -> int:
+    import region
+
+    return region.cmd_region(args.iso)
+
+
+def cmd_self_test(args) -> int:
+    import selftest
+
+    return selftest.self_test(args.iso, args.full, args.scratch)
+
+
+def _utf8_output() -> None:
+    """Print UTF-8 whatever the console's code page is: the kit prints song
+    titles, Japanese text and the ⟦NN⟧ escapes, which a cp1252 pipe on Windows
+    cannot encode (the Episode II kit's first Windows build crashed on this)."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main() -> int:
+    _utf8_output()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn in (("list", cmd_list), ("extract", cmd_extract),
@@ -543,17 +563,41 @@ def main() -> int:
                      ("font-rebuild", cmd_font_rebuild),
                      ("lang", cmd_lang),
                      ("statfont", cmd_statfont),
+                     ("tx-build", cmd_tx_build),
+                     ("tx-catalog", cmd_tx_catalog),
                      ("subs-template", cmd_subs_template),
                      ("subs-burn", cmd_subs_burn),
                      ("layer1-list", cmd_layer1_list),
                      ("layer1-patch", cmd_layer1_patch),
+                     ("region", cmd_region),
+                     ("self-test", cmd_self_test),
                      ("music-export", cmd_music_export)):
         p = sub.add_parser(name)
+        if name == "self-test":
+            p.add_argument("--iso", help="disc image for the read-only disc checks "
+                                         "(default: the XS1_ISO environment variable)")
+            p.add_argument("--full", action="store_true",
+                           help="every compressed object, and the checks that build "
+                                "patched clones of the image in --scratch")
+            p.add_argument("--scratch", help="folder for the clones --full builds "
+                                             "(same volume as the image)")
+            p.set_defaults(fn=fn)
+            continue
         if name == "music-export":
             p.add_argument("--dump", required=True,
                            help="extracted dump directory (cli.py extract output)")
             p.add_argument("--out", required=True)
             p.set_defaults(fn=cmd_music_export)
+            continue
+        if name == "tx-build":
+            p.add_argument("--project", required=True,
+                           help="translation-editor project (.json)")
+            p.add_argument("--retail", required=True,
+                           help="untouched USA image the project was made from (only read)")
+            p.add_argument("--out", required=True, help="translated ISO to write")
+            p.add_argument("--overwrite", action="store_true",
+                           help="replace --out if it already exists")
+            p.set_defaults(fn=fn)
             continue
         if name == "statfont":
             p.add_argument("statfont_cmd", choices=("extract", "scan", "encode"),
@@ -629,10 +673,17 @@ def main() -> int:
             p.add_argument("--out", required=True, help="patched ISO to write")
             p.add_argument("--grow", action="store_true",
                            help="move strings that outgrow their slot to the end of "
-                                "the overlay, and the overlay to the end of the image "
-                                "if the next file leaves no room")
+                                "the overlay (boot executable: to a load segment of "
+                                "their own in unused memory), and the file to the end "
+                                "of the image if the next file leaves no room")
             p.add_argument("--retail", help="unmodified ISO to take the executables from "
                                             "(import again into an already-patched disc)")
+            p.add_argument("--skip-unfit", action="store_true",
+                           help="write every string that fits and list the others as "
+                                "'skipped' instead of refusing the whole import")
+        if name == "tx-catalog":
+            p.add_argument("--out", required=True,
+                           help="JSON file for every translatable string (editor catalog)")
         if name == "font-extract":
             p.add_argument("--out", required=True,
                            help="directory for font0/font1 .tex, sheet PNGs, metrics CSV")

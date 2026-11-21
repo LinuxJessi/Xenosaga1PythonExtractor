@@ -53,10 +53,13 @@ live in `arx.py`, ~80 lines each.
 
 The encoder's LUT is the 30 most frequent u32 words of the payload, most
 frequent first, **ties broken by first occurrence in the payload**. That
-tie-break was found by comparing against retail: with it, 2,094 of the
-2,095 compressed objects on the disc recompress **byte-identically**
-(`chain1/mtnpack/SCE02004D.arc` differs only within the LUT order of
-equal-frequency words, and round-trips exactly). Monolith's 2002 packer
+tie-break was found by comparing against retail: with it, 2,165 of the
+2,168 compressed objects on the disc recompress **byte-identically**
+(three small motion archives, `chain1/mtnpack/SCE02004D.arc`,
+`chain2/mtnpack/SCE03031B.arc` and `chain2/mtnpack/SCE03050C1.arc`, differ
+only within the LUT order of equal-frequency words, at the same size, and
+round-trip exactly; `python cli.py self-test --iso GAME.iso --full` recounts
+this on your disc). Monolith's 2002 packer
 evidently used the same greedy scheme.
 
 Why byte-identity matters practically: recompression of an *untouched*

@@ -10,10 +10,19 @@ mechanics of modding in [MODDING.md](MODDING.md). This file is about the
 
 Two rules shape everything here:
 
-1. **Standard library only.** No pip installs, ever, for any feature. This
-   is why the GUI is a hand-rolled `http.server` page and PNG/WAV writers
-   are written from scratch. The only external program the kit will use is
-   `ffmpeg`, and only for movie conversion (release bundles ship one).
+1. **Standard library, plus three required packages.** Extracting,
+   converting, patching and the text pipeline are the standard library:
+   this is why the GUI is a hand-rolled `http.server` page and PNG/WAV
+   writers are written from scratch. Three packages are needed on top, and
+   all three are *required*, never optional with a worse fallback
+   (`requirements.txt`): numpy for the music renderer, fontTools and
+   uharfbuzz for drawing and shaping letters the game's fonts never had.
+   The launchers install them, `build.py` refuses to build without them,
+   the app bundles carry them, and `cli.py self-test` fails when one cannot
+   be imported. (Until 2026-11-21 this rule read "standard library only"
+   and `music-export` quietly wrote MIDI and SoundFont without numpy; that
+   fallback is gone.) The only external program the kit uses is `ffmpeg`,
+   for movies and FLAC (release bundles ship one).
 2. **Every layer is importable on its own.** `toc.py`, `arx.py`,
    `iso9660.py` etc. have no dependencies on the CLI or each other beyond
    what's genuinely needed, so you can `from arx import decompress` in a
@@ -222,7 +231,7 @@ Not wired into the GUI; run directly when digging:
 | understand the disc format | `toc.py` docstring, then [FORMATS.md](FORMATS.md) |
 | add a new asset decoder | a sibling in `browse.py` (e.g. `decode_voice_stream`), wire into `build_browse` |
 | build a new mod | `repack.py` (it's 188 lines), then `pinkhair.py` as the worked example |
-| translate the game | [MODDING.md](MODDING.md) §5, then `textpack.py` and `evttext.py` |
+| translate the game | [TRANSLATION-EDITOR.md](TRANSLATION-EDITOR.md) and `txbuild.py`; the text trees: [MODDING.md](MODDING.md) §5, then `textpack.py` and `evttext.py` |
 | translate into another alphabet | [SCRIPTS.md](SCRIPTS.md), then `font.py` → `glyphs.py` → `langpack.py` |
 | translate menu and battle words | `ovltext.py` (the overlays), then [SCRIPTS.md](SCRIPTS.md) § 2b; battle bars: `statfont.py`, § 2c |
 | subtitle a movie in any script | [SUBTITLES.md](SUBTITLES.md), then `subs.py` (`CueRenderer`, `encode_es_overlay`) |
@@ -241,6 +250,25 @@ anything visual, [MODDING.md](MODDING.md) §6 shows how to dump the
 running game's RAM over PCSX2's PINE socket and check what the engine
 *actually* loaded. When you change the code, keep that property: prefer
 adding a check to trusting a formula.
+
+**`python cli.py self-test`** (`selftest.py`, November 2026) runs those
+checks in one go, the way the Episode II and III kits do. Without a disc:
+every module and required package imports, the ARX, text and font codecs
+round-trip made-up data, `region.py` identifies builds, and the translation
+editor answers every route on a real socket with its fake catalog. With
+`--iso` (or `XS1_ISO`), read-only: the three tables of contents parse, a
+sample of the disc's ARX objects recompress to the disc's own bytes, both
+fonts and every dialogue container rebuild identically, and on the USA disc
+the editor's codec, catalog, project and server checks run against it.
+`--full` recompresses every ARX object and runs the editor checks that
+build patched copy-on-write clones in `--scratch`. `build.py` runs the
+no-disc part from inside the finished bundle.
+
+**`python cli.py region --iso GAME.iso`** (`region.py`) names the build
+(USA retail, the Japanese *Reloaded* disc, the 2002 Japanese original by
+serial only), prints the executable's sha256 and whether it still has its
+symbol table, counts each chain, and says what the kit has been checked
+with on that build.
 
 
 ## Added in the translation update (October 2026)
@@ -261,8 +289,8 @@ and out with stdlib `zlib`.
 (keys → slots, proportional first, kanji cells for overflow, JSON on
 disk), `from_png` for hand-drawn cells, and `TTFRenderer` (HarfBuzz
 shaping + fontTools outlines + a stdlib scanline rasteriser) for the
-automatic path. The two optional packages are the only non-stdlib
-dependency in the kit besides numpy for music rendering.
+automatic path. Those two packages and numpy (music rendering) are the
+kit's only non-stdlib dependencies; all three are required.
 
 **`langpack.py`** — the text side: tokenise (control codes kept in
 logical order), shape per word, measure with the new metrics, wrap to a
@@ -303,3 +331,36 @@ and blurs the original subtitle band while a cue is up, and
 `subs-template --detect` can write a timed skeleton. `burn` picks the
 overlay path whenever a font or a directory of cue PNGs is given, and
 needs no libass for it.
+
+
+## The translation editor (November 2026)
+
+One page (`/editor`) over every string of the disc, documented for
+users in [TRANSLATION-EDITOR.md](TRANSLATION-EDITOR.md). Reads run
+in-process in the GUI because they are read-only; the build shells out
+to `cli.py tx-build` like every other card.
+
+**`txcodec.py`** — display text ↔ engine bytes for the three printers
+(field font, battle grid, ASCII ribbons): `to_display`/`from_display`,
+`check` (protected tokens, byte limit, width), one Latin map per font
+face (`LATIN_MAP` for font1, `LATIN_MAP_FONT0`; they swap grave and
+acute), `evt_face`, and `fix_capital_accents` for font0's È É Ê Ë.
+
+**`txfam_umn.py`, `txfam_evt.py`, `txfam_ovl.py`, `txfam_fix.py`** — the
+four string families, each with `rows(iso)` (catalog rows), `validate`
+and `apply(out, retail, edits)` (writes from the retail bytes, refuses
+the retail image, validates before writing) and a `selftest` that
+builds a French/Spanish sample into a clone and reads it back.
+`umn`: mails, database, chats and the two header lists; `evt`: every
+string literal of the `.evt` scripts, with drawn/never-drawn analysis of
+the bytecode; `ovl`: the executables' C strings on top of `ovltext`;
+`fix`: fixed tables (key items, save-screen names, plug-ins, junk
+parts, cards, casino, enemy battle quotes).
+
+**`txcatalog.py`** — merges the families into one catalog (`rows`,
+`cats` tree), cached per retail id. **`txproject.py`** — the project
+JSON, retail id, TSV and numbered-paste formats. **`txserver.py`** /
+**`txeditor_page.py`** — the `/editor` page and its `/tx/*` routes
+(per-launch token, loopback only), delegated to from `gui.Handler`.
+**`txbuild.py`** — the build: retail-id check, validate all, clone to
+`OUT.partial`, apply, font fix, read back, rename.

@@ -33,8 +33,22 @@ the image and its directory record repointed (``grow``).
 
 Memory past the overlay region is unused on the USA disc (the boot ELF's
 bss ends at 0x99D910; 0xA5B8F8-0xA80000 read as zero on the running
-game), which is what makes the segment-append safe. The boot ELF has a
-bss after its data, so its strings are in-place only.
+game), which is what makes the segment-append safe.
+
+The boot ELF has a bss after its data, so nothing can be appended to its
+data segment: the bytes would land on variables the startup code zeroes.
+Its long strings go to a load segment of their own instead (``grow``
+again), placed in memory the program never touches: above the end of
+the C heap (``_end`` + ``_heap_size``, both read from the ELF's symbols:
+0x99D910 + 0x10000 on the USA disc, rounded up to 0x9B0000, plus 32K =
+0x9B8000) and below the lowest address any overlay loads at (0x9FF000). The segment gets a
+fifth program header in the zero padding after the four the file has;
+its bytes sit in the rest of that padding (0xE0-0x1000, the file keeps
+its size) or, when they outgrow it, at the end of the file. A boot ELF
+without those two symbols, with an unbounded heap, or with a stack
+inside that span is left in place only. Strings addressed off ``$gp``
+(``addiu rX, gp, n``) cannot be moved out of gp's reach and are
+reported.
 
 Moving overlay strings instead of squeezing them is how poketony's
 XS1KOR (the Korean localisation of the Japanese disc) handled this
@@ -56,6 +70,9 @@ from textpack import decode_text, encode_text
 PT_LOAD = 1
 STT_FUNC = 2
 ALIGN = 4
+ZONE_ALIGN = 0x10000      # the boot ELF's string segment: next 64K boundary after the heap,
+ZONE_PHASE = 0x8000       # plus 32K, so the low halves of its addresses start at 0x8000
+PF_RW = 6
 
 
 @dataclass
@@ -98,19 +115,31 @@ class Overlay:
             raise ValueError(f"{name}: not an ELF")
         (e_phoff, e_shoff) = struct.unpack_from("<II", data, 28)
         e_phentsize, e_phnum, e_shentsize, e_shnum, e_shstrndx = struct.unpack_from("<HHHHH", data, 42)
+        self.e_phoff = e_phoff
+        self.e_phentsize = e_phentsize
+        self.e_phnum = e_phnum
         self.e_shoff = e_shoff
         self.e_shnum = e_shnum
         self.segments: List[Segment] = []
+        self._contents: List[Tuple[int, int]] = []   # (file offset, load address or -1) of everything in the file
+        if e_shoff:
+            self._contents.append((e_shoff, -1))
         for i in range(e_phnum):
             p = e_phoff + i * e_phentsize
             p_type, p_off, p_vaddr, _, p_filesz, p_memsz = struct.unpack_from("<6I", data, p)
             if p_type == PT_LOAD:
                 self.segments.append(Segment(p_vaddr, p_off, p_filesz, p_memsz, p))
+            if p_filesz:
+                self._contents.append((p_off, p_vaddr if p_type == PT_LOAD else -1))
+        # (base, limit) of memory a boot ELF's relocated strings may use; see free_zone
+        self.zone: Optional[Tuple[int, int]] = None
         self.sections: List[Tuple[int, int, int, int, int]] = []  # (sh_off_in_file, type, addr, off, size)
         for i in range(e_shnum):
             p = e_shoff + i * e_shentsize
             _, sh_type, _, sh_addr, sh_off, sh_size = struct.unpack_from("<6I", data, p)
             self.sections.append((p, sh_type, sh_addr, sh_off, sh_size))
+            if sh_type not in (0, 8) and sh_size:
+                self._contents.append((sh_off, -1))
         self.funcs = self._functions()
         self._code = bytearray(len(data))            # 1 = inside a sized FUNC symbol
         for f_off, size in self.funcs:
@@ -133,8 +162,96 @@ class Overlay:
         return None
 
     @property
-    def growable(self) -> bool:
+    def _plain(self) -> bool:
+        """One load segment and no bss: strings can be appended to it."""
         return len(self.segments) == 1 and self.segments[0].filesz == self.segments[0].memsz
+
+    @property
+    def growable(self) -> bool:
+        return self._plain or self.zone is not None
+
+    def symbol(self, name: str) -> Optional[int]:
+        """Value of a symbol-table entry, by its name in the file."""
+        symtab = next((s for s in self.sections if s[1] == 2), None)
+        if symtab is None:
+            return None
+        link = struct.unpack_from("<I", self.data, symtab[0] + 24)[0]
+        if link >= len(self.sections):
+            return None
+        names = self.sections[link][3]
+        want = name.encode() + b"\0"
+        for i in range(symtab[4] // 16):
+            st_name, value = struct.unpack_from("<II", self.data, symtab[3] + i * 16)
+            if self.data[names + st_name:names + st_name + len(want)] == want:
+                return value
+        return None
+
+    def load_ranges(self) -> List[Tuple[int, int]]:
+        return [(s.vaddr, s.vaddr + s.memsz) for s in self.segments]
+
+    def free_zone(self, others: List[Tuple[int, int]]) -> Optional[Tuple[int, int]]:
+        """(base, limit) of the memory a segment of relocated strings may
+        occupy in an executable with a bss, or None when that cannot be
+        established from the file. ``others`` are the (start, end) load
+        ranges of every other executable the game loads (the overlays).
+
+        base is the first 64K boundary after the C heap, which the startup
+        code hands to the kernel as ``SetupHeap(_end, _heap_size)``, plus
+        32K; limit is the lowest load address above it. Both ends are
+        needed: without a bounded heap or without something above, nothing
+        says the span is unused.
+
+        The 32K is for the scanner's sake, on a later run over the grown
+        file: the first 32K of strings then have ``addiu`` low halves of
+        -0x8000 and up, which no structure-field access resembles. A
+        string at xxxx0000 + a small number would collect false
+        references from every ``lw rX, 8(rY)`` whose rY last held that
+        high half."""
+        if self._plain:
+            return None
+        end, heap = self.symbol("_end"), self.symbol("_heap_size")
+        if end is None or heap is None or heap >= 0x80000000:
+            return None
+        bss_end = max((s.vaddr + s.memsz for s in self.segments if s.memsz > s.filesz), default=None)
+        if bss_end != end:
+            return None
+        base = ((end + heap + ZONE_ALIGN - 1) & ~(ZONE_ALIGN - 1)) + ZONE_PHASE
+        mine = [(s.vaddr, s.vaddr + s.memsz) for s in self.segments if s.vaddr != base]
+        above = [lo for lo, hi in mine + list(others) if lo >= base]
+        if not above or any(lo < base < hi for lo, hi in mine + list(others)):
+            return None
+        limit = min(above)
+        stack, stack_size = self.symbol("_stack"), self.symbol("_stack_size") or 0
+        if stack is not None and stack < 0x80000000 and stack < limit and stack + stack_size > base:
+            return None
+        if self._zone_segment(base) is None:
+            # room for one more program header, in bytes nothing uses
+            slot = self.e_phoff + self.e_phnum * self.e_phentsize
+            if (self.e_phentsize != 32 or slot + 32 > self._first_content(base)
+                    or any(self.data[slot:slot + 32])):
+                return None
+        return (base, limit) if limit - base >= ALIGN else None
+
+    def _first_content(self, base: int) -> int:
+        """Lowest file offset anything but the string segment at ``base`` occupies."""
+        return min((off for off, va in self._contents if va != base), default=len(self.data))
+
+    def _zone_segment(self, base: int) -> Optional[Segment]:
+        return next((s for s in self.segments if s.vaddr == base), None)
+
+    def _gp_targets(self) -> Dict[int, int]:
+        """address -> file offset of an ``addiu rX, gp, n`` that forms it."""
+        gp = self.symbol("_gp")
+        out: Dict[int, int] = {}
+        if gp is None:
+            return out
+        for f_off, size in self.funcs:
+            for off in range(f_off, f_off + size - 3, 4):
+                w = struct.unpack_from("<I", self.data, off)[0]
+                if w >> 26 == 0x09 and (w >> 21) & 31 == 28:
+                    imm = w & 0xFFFF
+                    out.setdefault(gp + (imm - 0x10000 if imm & 0x8000 else imm), off)
+        return out
 
     def _functions(self) -> List[Tuple[int, int]]:
         """(file offset, size) of every FUNC symbol with a size; code is only
@@ -284,12 +401,23 @@ class Overlay:
 
     # -- rewriting ----------------------------------------------------------
 
-    def apply(self, new_text: Dict[int, str], grow: bool) -> List[str]:
+    def apply(self, new_text: Dict[int, str], grow: bool, skip_unfit: bool = False) -> List[str]:
         """Write the changed strings. Returns a log; raises ValueError with
-        every problem listed when something cannot be done."""
+        every problem listed when something cannot be done. With
+        ``skip_unfit`` the strings that cannot be written (slot too small,
+        shared lui, no room) are left as they were and listed in the log as
+        ``skipped @addr: why`` while the rest is written."""
         log, problems = [], []
         seg = self.segments[0]
         appended = bytearray()
+        if self._plain:
+            start_va, limit = seg.vaddr + seg.filesz, None
+        elif self.zone is not None:
+            start_va, limit = self.zone
+            old = self._zone_segment(start_va)
+            if old is not None:
+                start_va += (old.filesz + ALIGN - 1) & ~(ALIGN - 1)
+        gp_targets: Optional[Dict[int, int]] = None
         patches: List[Tuple[int, bytes]] = []          # (file off, bytes) applied at the end
         for va, text in new_text.items():
             s = self.strings.get(va)
@@ -309,13 +437,26 @@ class Overlay:
                 log.append(f"@{va:x}: {len(s.raw)} -> {len(raw)} bytes in place")
                 continue
             if not grow or not self.growable:
-                why = "not growable (has bss)" if not self.growable else "pass --grow"
+                why = ("not growable (has bss, and no free memory could be "
+                       "established for it)") if not self.growable else "pass --grow"
                 problems.append(f"@{va:x}: {len(raw) + 1} bytes need a {s.slot}-byte slot; {why}")
                 continue
-            # relocate: append to the load segment, repoint every reference
+            if not self._plain:
+                if gp_targets is None:
+                    gp_targets = self._gp_targets()
+                if va in gp_targets:
+                    problems.append(f"@{va:x}: also addressed off gp at "
+                                    f"{self.off_to_va(gp_targets[va]):#x}, which cannot reach "
+                                    f"a moved string; shorten the text to {s.slot - 1} bytes")
+                    continue
+            # relocate: append to the load segment (or, with a bss, to the
+            # string segment in the free zone), repoint every reference
             while len(appended) % ALIGN:
                 appended.append(0)
-            new_va = seg.vaddr + seg.filesz + len(appended)
+            new_va = start_va + len(appended)
+            if limit is not None and new_va + len(raw) + 1 > limit:
+                problems.append(f"@{va:x}: no room left below {limit:#x} for {len(raw) + 1} bytes")
+                continue
             appended += raw + b"\0"
             lo = new_va & 0xFFFF
             hi_signed = (new_va >> 16) + (1 if lo & 0x8000 else 0)
@@ -345,13 +486,56 @@ class Overlay:
             patches += ref_patches
             log.append(f"@{va:x}: {len(s.raw)} -> {len(raw)} bytes, moved to {new_va:#x} "
                        f"({len(s.refs)} reference{'s' if len(s.refs) != 1 else ''})")
-        if problems:
+        if problems and skip_unfit:
+            log.extend("skipped " + q for q in problems)
+        elif problems:
             raise ValueError("\n".join(problems))
         for off, b in patches:
             self.data[off:off + len(b)] = b
-        if appended:
+        if appended and self._plain:
             self._grow_segment(bytes(appended))
+        elif appended:
+            self._grow_zone(bytes(appended))
         return log
+
+    def _grow_zone(self, extra: bytes) -> None:
+        """Add ``extra`` to the string segment at the zone base, creating the
+        segment (one more program header) the first time. The bytes go in
+        the zero padding between the program headers and the first thing in
+        the file when they fit there, else at the end of the file; nothing
+        else in the file moves either way."""
+        base, _ = self.zone
+        old = self._zone_segment(base)
+        if old is not None:
+            blob = bytes(self.data[old.off:old.off + old.filesz])
+            blob += bytes(-len(blob) % ALIGN) + extra
+            if old.off + old.filesz == len(self.data):
+                del self.data[old.off:]
+            else:
+                self.data[old.off:old.off + old.filesz] = bytes(old.filesz)
+            ph = old.ph_off
+        else:
+            blob = extra
+            ph = self.e_phoff + self.e_phnum * self.e_phentsize
+            self.e_phnum += 1
+            struct.pack_into("<H", self.data, 44, self.e_phnum)
+        blob += bytes(-len(blob) % ALIGN)
+        table_end = self.e_phoff + self.e_phnum * self.e_phentsize
+        off = (table_end + 15) & ~15
+        floor = self._first_content(base)
+        if off + len(blob) > floor or any(self.data[off:floor]):
+            self.data += bytes(-len(self.data) % 16)
+            off = len(self.data)
+            self.data += blob
+        else:
+            self.data[off:off + len(blob)] = blob
+        struct.pack_into("<8I", self.data, ph, PT_LOAD, off, base, base,
+                         len(blob), len(blob), PF_RW, 16)
+        seg = Segment(base, off, len(blob), len(blob), ph)
+        if old is not None:
+            self.segments[self.segments.index(old)] = seg
+        else:
+            self.segments.append(seg)
 
     def _grow_segment(self, extra: bytes) -> None:
         seg = self.segments[0]
@@ -387,6 +571,32 @@ def executables(iso: IsoImage) -> List[str]:
     return ([boot] if boot else []) + names
 
 
+def _segments_of(data: bytes) -> List[Tuple[int, int]]:
+    """(start, end) in memory of an ELF's load segments, headers only."""
+    if data[:4] != b"\x7fELF":
+        return []
+    e_phoff = struct.unpack_from("<I", data, 28)[0]
+    e_phentsize, e_phnum = struct.unpack_from("<HH", data, 42)
+    out = []
+    for i in range(e_phnum):
+        p_type, _, p_vaddr, _, _, p_memsz = struct.unpack_from("<6I", data, e_phoff + i * e_phentsize)
+        if p_type == PT_LOAD:
+            out.append((p_vaddr, p_vaddr + p_memsz))
+    return out
+
+
+def set_zone(ov: Overlay, iso: IsoImage) -> None:
+    """Give an executable with a bss (the boot ELF) its free zone, bounded by
+    where the other executables on ``iso`` load."""
+    if ov._plain:
+        return
+    others: List[Tuple[int, int]] = []
+    for name in executables(iso):
+        if name != ov.name:
+            others += _segments_of(bytes(iso.read_file(name)))
+    ov.zone = ov.free_zone(others)
+
+
 def export_strings(iso_path: str, out_dir: str) -> int:
     iso = IsoImage(iso_path)
     out = Path(out_dir) / "fs"
@@ -395,6 +605,7 @@ def export_strings(iso_path: str, out_dir: str) -> int:
         total = 0
         for name in executables(iso):
             ov = Overlay(name, bytes(iso.read_file(name)))
+            set_zone(ov, iso)
             with open(out / f"{name}.txt", "w", encoding="utf-8", newline="") as fh:
                 fh.write(ov.to_text())
             print(f"{name}: {len(ov.strings)} strings"
@@ -407,7 +618,7 @@ def export_strings(iso_path: str, out_dir: str) -> int:
 
 
 def import_strings(iso_path: str, text_dir: str, out_iso: str, grow: bool = False,
-                   retail_iso: Optional[str] = None) -> int:
+                   retail_iso: Optional[str] = None, skip_unfit: bool = False) -> int:
     """``retail_iso``: take the executables from this (unmodified) disc
     instead of ``iso_path``, so a tree keyed by retail addresses can be
     imported again into a disc whose overlays were already rewritten."""
@@ -432,8 +643,9 @@ def import_strings(iso_path: str, text_dir: str, out_iso: str, grow: bool = Fals
                 failed = True
                 continue
             ov = Overlay(name, bytes(source.read_file(name)))
+            set_zone(ov, source)
             try:
-                log = ov.apply(new_text, grow)
+                log = ov.apply(new_text, grow, skip_unfit)
             except ValueError as e:
                 print(f"{name}:\n  " + str(e).replace("\n", "\n  "), file=sys.stderr)
                 failed = True
@@ -441,7 +653,7 @@ def import_strings(iso_path: str, text_dir: str, out_iso: str, grow: bool = Fals
             if not log:
                 continue
             for line in log:
-                print(f"{name} {line}")
+                print(f"{name} {line}", file=sys.stderr if line.startswith("skipped") else sys.stdout)
             fits = len(ov.data) <= fs_allocation(iso, name)
             if not fits and not grow:
                 print(f"{name}: grown to {len(ov.data)} bytes, more than the "
