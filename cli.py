@@ -22,6 +22,9 @@ Usage:
     python cli.py subs-template --src MOVIE.pss --out MOVIE.srt [--cue-seconds 5]
     python cli.py subs-burn --src MOVIE.pss --srt MOVIE.srt --out MOVIE.dub.pss
                             [--max-bytes N]
+    python cli.py model --dump OUTDIR/dump --path 'char\\pc\\kosmos.lex' --out kosmos.glb
+                        [--motion 'motion\\kosmos_cf.fpk#1,5'] [--no-motion]
+    python cli.py motion --dump OUTDIR/dump (--sweep | --pack 'motion\\kosmos_cf.fpk')
     python cli.py region --iso GAME.iso          # which build, what was checked on it
     python cli.py self-test [--iso GAME.iso] [--full]
     python cli.py layer1-list  --iso GAME.iso
@@ -522,6 +525,20 @@ def cmd_music_export(args) -> int:
     return 0
 
 
+def cmd_model(args) -> int:
+    """One model of an extracted dump -> .glb, with its motion clips."""
+    import fcv
+
+    return fcv.cli_model(args.dump, args.path, args.out, args.motion, args.no_motion)
+
+
+def cmd_motion(args) -> int:
+    """List one motion pack, or read every clip of the dump."""
+    import fcv
+
+    return fcv.cli_motion(args.dump, args.pack, args.sweep)
+
+
 def cmd_region(args) -> int:
     import region
 
@@ -570,6 +587,8 @@ def main() -> int:
                      ("layer1-list", cmd_layer1_list),
                      ("layer1-patch", cmd_layer1_patch),
                      ("region", cmd_region),
+                     ("model", cmd_model),
+                     ("motion", cmd_motion),
                      ("self-test", cmd_self_test),
                      ("music-export", cmd_music_export)):
         p = sub.add_parser(name)
@@ -581,6 +600,25 @@ def main() -> int:
                                 "patched clones of the image in --scratch")
             p.add_argument("--scratch", help="folder for the clones --full builds "
                                              "(same volume as the image)")
+            p.set_defaults(fn=fn)
+            continue
+        if name in ("model", "motion"):
+            p.add_argument("--dump", required=True,
+                           help="extracted dump directory (cli.py extract output)")
+            if name == "model":
+                p.add_argument("--path", required=True,
+                               help="in-game path of the .lex, e.g. 'char\\pc\\kosmos.lex'")
+                p.add_argument("--out", required=True, help=".glb to write")
+                p.add_argument("--motion", action="append", metavar="PACK[#SLOTS]",
+                               help="motion pack to attach, e.g. 'motion\\kosmos_cf.fpk#1,5' "
+                                    "(repeatable; default: every clip in motion\\ that "
+                                    "was made for this model's skeleton)")
+                p.add_argument("--no-motion", action="store_true",
+                               help="write the model without animations")
+            else:
+                p.add_argument("--pack", help="list one pack, e.g. 'motion\\kosmos_cf.fpk'")
+                p.add_argument("--sweep", action="store_true",
+                               help="read every clip of every pack and pose the paired ones")
             p.set_defaults(fn=fn)
             continue
         if name == "music-export":

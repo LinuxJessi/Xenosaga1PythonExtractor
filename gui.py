@@ -509,6 +509,35 @@ def build_layer1_list(form):
     return [*CLI_ARGV, "layer1-list", "--iso", iso]
 
 
+def build_model(form):
+    out = _str(form, "out")
+    path = _str(form, "path")
+    glb = _str(form, "glb")
+    if not out or not path or not glb:
+        raise ValueError("Output directory, model path and .glb file are required")
+    # jobs run in the kit's folder, so a bare file name goes in the output folder
+    glb_path = Path(glb).expanduser()
+    if not glb_path.is_absolute():
+        glb_path = Path(out).expanduser() / glb_path
+    args = [*CLI_ARGV, "model", "--dump", str(Path(out) / "dump"), "--path", path,
+            "--out", str(glb_path)]
+    for spec in _str(form, "motion").replace(";", "\n").splitlines():
+        if spec.strip():
+            args += ["--motion", spec.strip()]
+    if _bool(form, "no_motion"):
+        args.append("--no-motion")
+    return args
+
+
+def build_motion(form):
+    out = _str(form, "out")
+    if not out:
+        raise ValueError("Output directory is required")
+    args = [*CLI_ARGV, "motion", "--dump", str(Path(out) / "dump")]
+    pack = _str(form, "pack")
+    return args + (["--pack", pack] if pack else ["--sweep"])
+
+
 def build_region(form):
     iso = _str(form, "iso")
     if not iso:
@@ -584,6 +613,8 @@ BUILDERS = {
     "layer1-list":   build_layer1_list,
     "layer1-patch":  build_layer1_patch,
     "tx-build":      build_tx_build,
+    "model":         build_model,
+    "motion":        build_motion,
     "region":        build_region,
     "self-test":     build_self_test,
 }
@@ -1576,7 +1607,7 @@ async function loadStatus() {
       {name: 'textures', label: 'Textures',    type: 'checkbox', value: true,
        hint: '.xtx → PNG, ARX-compressed ones included (1,269 files, ~2 min)'},
       {name: 'models',   label: 'Models',      type: 'checkbox', value: true,
-       hint: '.lex → glTF binary (.glb) with the decoded atlas embedded and skin weights — opens in Blender (File ▸ Import ▸ glTF)'},
+       hint: '.lex → glTF binary (.glb) with the decoded atlas embedded, skin weights, armature and the motion clips made for its skeleton — opens in Blender (File ▸ Import ▸ glTF)'},
       {name: 'audio',    label: 'Voice audio', type: 'checkbox', value: true,
        hint: '.vds/.vdm → WAV mono (104 files, ~3 min)'},
       {name: 'rate',     label: 'Voice rate',  type: 'select', value: '48000',
@@ -1890,7 +1921,33 @@ async function loadStatus() {
       {name: 'file',  label: 'Replacement .pss', pick: {mode: 'file', filter: 'pss'}},
     ], 'Write back'));
 
-  cards.appendChild(makeCard(15, 'region', 'Which disc is this?',
+  cards.appendChild(makeCard(15, 'model', 'One model with its motion (.glb)',
+    'Writes one model of the extracted dump as a <code>.glb</code> for Blender: mesh, texture, armature and ' +
+    'one animation per motion clip. The clips are the game\'s <code>FCV</code> curves, read the way the ' +
+    'executable reads them and sampled at 30 frames a second, leg chains solved toward their targets. ' +
+    'With no pack named, the model gets every clip in <code>motion\\</code> made for its skeleton. ' +
+    'Hair and cloth swing through a port of the game\'s own simulation; skirts keep their rest pose and ' +
+    'there is no wind. Playback has not been compared with the running game. Run <em>Extract assets</em> first.',
+    [
+      {name: 'out',  label: 'Output dir', value: defaultOut, pick: {mode: 'dir'}},
+      {name: 'path', label: 'Model', value: 'char\\pc\\kosmos.lex',
+       placeholder: 'in-game path of a .lex'},
+      {name: 'glb',  label: '.glb to write', placeholder: 'e.g. kosmos.glb'},
+      {name: 'motion', label: 'Motion packs (optional)',
+       placeholder: 'e.g. motion\\kosmos_cf.fpk#1,3 (pack, then the slots wanted; several packs with ; between)'},
+      {name: 'no_motion', label: 'No motion', type: 'checkbox', hint: 'the model in its rest pose only'},
+    ], 'Write the model'));
+
+  cards.appendChild(makeCard(16, 'motion', 'List or check the motion packs',
+    'With a pack named, lists its clips: slots, the skeleton each was made for, frames, keys and frame range. ' +
+    'With none, reads every clip of every <code>.fpk</code> in the dump to its last byte, pairs each with the ' +
+    'skeletons it was made for (by the game\'s own name key), and poses the first, middle and last frame of each pair. Read-only.',
+    [
+      {name: 'out',  label: 'Output dir', value: defaultOut, pick: {mode: 'dir'}},
+      {name: 'pack', label: 'Pack (optional)', placeholder: 'e.g. motion\\kosmos_cf.fpk'},
+    ], 'Read'));
+
+  cards.appendChild(makeCard(17, 'region', 'Which disc is this?',
     'Reads the build from the image itself: the boot executable and its sha256, whether it still has ' +
     'its function names, how many objects each data chain holds, and what the kit has been checked ' +
     'with on that build (USA retail, or the Japanese <em>Reloaded</em> disc). Read-only.',
@@ -1898,11 +1955,11 @@ async function loadStatus() {
       {name: 'iso', label: 'Disc image', value: defaultIso, pick: {mode: 'file', filter: 'iso'}},
     ], 'Identify'));
 
-  cards.appendChild(makeCard(16, 'self-test', 'Check the kit (self-test)',
+  cards.appendChild(makeCard(18, 'self-test', 'Check the kit (self-test)',
     'Runs the kit\'s own checks: every module and required package imports, the codecs round-trip, ' +
     'the translation editor answers every route. With a disc image it also re-proves, read-only, that ' +
     'the compressor reproduces the disc\'s own bytes and that fonts and dialogue rebuild identically ' +
-    '(about half a minute).',
+    '(under a minute).',
     [
       {name: 'iso', label: 'Disc image (optional)', value: defaultIso, pick: {mode: 'file', filter: 'iso'}},
     ], 'Run the checks'));

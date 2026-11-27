@@ -3,11 +3,22 @@
 Unpack, browse and mod **Xenosaga Episode I — Der Wille zur Macht** (PS2,
 USA release SLUS-20469) with nothing but Python. Point it at your own disc
 image and you get every file on the disc in a form your computer can
-open: textures as PNG, **models as glTF for Blender**, voices and music
-as WAV, cutscenes as MP4, game text as UTF-8, and the cutscene scripts as
+open: textures as PNG, **models as glTF for Blender, rigged and animated
+with the game's own motion clips**, voices and music as WAV, cutscenes as MP4, game text as UTF-8, and the cutscene scripts as
 Java you can read. Then write your changes back to a bootable ISO.
 
 The kit ships no game data. You need your own copy of the disc.
+
+<table>
+<tr>
+<td align="center"><img src="docs/images/front/motion-kosmos-shion-walk.gif" height="300" alt="KOS-MOS and Shion walking: the kit's .glb files, each playing clip 1 of the character's field motion pack, rendered in Blender"></td>
+<td align="center"><img src="docs/images/front/motion-kosmos-run.gif" height="300" alt="KOS-MOS running: kosmos.glb playing clip 3 of motion/kosmos_cf.fpk, rendered in Blender"></td>
+</tr>
+<tr>
+<td align="center"><sub>KOS-MOS and Shion, exported with their motion<br>and rendered in Blender (clip 1 of each field pack)</sub></td>
+<td align="center"><sub>KOS-MOS, clip 3 of the same pack</sub></td>
+</tr>
+</table>
 
 ![KOS-MOS, Cherenkov and Albedo imported into Blender from the kit's .glb files](docs/images/blender-models.png)
 
@@ -28,6 +39,16 @@ font, with the letters it never had taken from a font on your computer
 (previews from the editor, not in-game captures; 382 languages are listed):
 
 ![Twelve sample lines drawn in the game's font: Chinese, Cherokee, Arabic, Inuktitut syllabics, N'Ko, Tifinagh, Amharic, Georgian, Khmer, Vai, Armenian and Thai](docs/images/editor-scripts.png)
+
+## What's new (November 2026)
+
+* **The models move.** The motion packs are decoded: all 4,147 clips on
+  the disc read to their last byte, and a clip made for a model's
+  skeleton becomes a Blender action on its armature, legs solved toward
+  their foot targets the way the game solves them, hair and cloth run
+  through a port of the game's own simulation. `browse` attaches them,
+  `model` writes one character with the clips you choose.
+  [Animation](#animation), [docs/MOTION.md](docs/MOTION.md).
 
 ## What's new (October 2026)
 
@@ -86,8 +107,8 @@ font, with the letters it never had taken from a font on your computer
   FLAC, with MIDI and SoundFont files alongside, at the right tempo.
   The story of how: [docs/MUSIC.md](docs/MUSIC.md).
 
-Still on the list: animation (the motion packs are located but not
-decoded, so bones pose but do not play) and a few map meshes in formats
+Still on the list: comparing the motion with the running game, skirts
+and wind in the hair and cloth simulation, and a few map meshes in formats
 the model parser skips. The full change log is in [docs/UPDATES.md](docs/UPDATES.md).
 
 ## Running it
@@ -143,7 +164,8 @@ Everything on the disc, converted to something you can open.
   tables and the pencil concept sketches hidden in its gallery.
 * 1,400 more textures pulled out of effect, scene and menu containers:
   battle effects, title and help screens, room backdrops.
-* Every model as a `.glb` with its texture inside, ready for Blender.
+* Every model as a `.glb` with its texture inside, ready for Blender,
+  with the motion clips made for its skeleton as actions.
 * The 58 full cutscene movies the disc hides on its second layer, as
   MP4 with sound, plus 189 smaller in-game clips. The boot logos and
   title art. The memory-card icon.
@@ -181,7 +203,7 @@ and all 103 voice streams, comes from your own disc.
 | | Where | Format |
 |---|---|---|
 | Textures | `browse/textures_png/` | PNG |
-| Models | `browse/models/` | glTF binary (`.glb`) |
+| Models and their motion | `browse/models/` | glTF binary (`.glb`) |
 | Voices and cutscene audio | `browse/audio/` | WAV |
 | Battle voices and sound effects | `browse/battle_audio/` | WAV |
 | Music | `browse/music/` (the **Render the soundtrack** card, or `music-export`) | WAV, FLAC, MIDI, SoundFont |
@@ -189,6 +211,46 @@ and all 103 voice streams, comes from your own disc.
 | Game text | `browse/text/` | UTF-8 |
 | Cutscene scripts | `browse/classes/` | Java class files |
 | Executables | `browse/code/` | ELF and IRX |
+
+## Animation
+
+<img src="docs/images/front/kosmos-turntable.gif" height="320" align="right" alt="KOS-MOS playing clip 0 of motion/kosmos_cf.fpk, a standing loop, while the camera circles her once">
+
+The motion files are decoded. They are `FPK` packs of `FCV` clips: curves
+of keys per skeleton block, read here the way the executable reads them
+(it keeps its function names, so the reader follows `FCV2_getPackValue`,
+`JNT_getVal` and `JNT_constructMatrix` and not a guess). Each clip becomes
+one glTF animation on the model's armature at 30 keys a second. The legs
+are not stored as
+rotations: the clip keys a target near each foot and the game solves the
+thigh and shin toward it every frame, and so does the kit.
+
+```sh
+python cli.py model  --dump out/dump --path 'char\pc\kosmos.lex' --out kosmos.glb
+python cli.py model  --dump out/dump --path 'char\pc\kosmos.lex' --out kosmos.glb \
+       --motion 'motion\kosmos_cf.fpk#1,3'
+python cli.py motion --dump out/dump --sweep      # read every clip on the disc
+```
+
+At the top of the page KOS-MOS and Shion play clip 1 of their field packs
+(`motion/kosmos_cf#01`, `motion/shion_cf#01`), a walk-like cycle, and
+KOS-MOS plays clip 3, a run. On the right the camera circles her once
+while she plays clip 0, a standing loop. Shion is `shion.lex`, the model her face is merged
+into; its skeleton calls itself `SHION_3` and the clip was made for `SHION`,
+so that pairing was asked for by name and is not one the kit makes by itself.
+
+All 4,147 clips on the disc read to exactly their last byte (the same on
+the Japanese *Reloaded* disc), 3,833 pair with a skeleton by the 32-bit
+key the game makes from the skeleton's name, and `kosmos.glb` comes out
+of `browse` with 37 actions. The clips have no names on the disc, so
+"walk" and "run" describe what the renders look like. Hair and cloth are
+not in the clips: the game simulates them while it plays, and the kit
+runs them through a port of that simulation (`EXM_CalcExMotion`), so
+KOS-MOS's back hair hangs behind her instead of sinking into her back. Chains the game treats
+as skirts keep their rest pose, and there is no wind. **None of this has
+been compared with the running game.** More in [docs/MOTION.md](docs/MOTION.md).
+
+<br clear="right">
 
 ## Translating the game
 
@@ -289,6 +351,7 @@ at all. If something breaks, please open an issue with the exact error.
 |---|---|
 | [BROWSING.md](docs/BROWSING.md) | know what is in the output and where to look first |
 | [BLENDER.md](docs/BLENDER.md), [MODELS.md](docs/MODELS.md) | bring the models into Blender; see how models and skeletons are decoded and what is still open |
+| [MOTION.md](docs/MOTION.md) | the motion packs: the format as read from the game's code, how clips become Blender actions, what was checked and what was not |
 | [MODDING.md](docs/MODDING.md) | change the game: patching, recolours, translation, verification |
 | [SUBTITLES.md](docs/SUBTITLES.md) | add subtitles to the cutscenes |
 | [TRANSLATING.md](docs/TRANSLATING.md) | **translate the game into your language, step by step, no programming** |

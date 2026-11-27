@@ -16,9 +16,8 @@ python cli.py browse  --out out/ --kinds models
 ```
 
 writes one `.glb` per model under `out/browse/models/`, in the game's own
-folders (`chain0/char/pc/kosmos.glb`). There is no single-model command, as
-the other two kits have; `BLENDER.md` ends with the six lines of Python that
-convert one.
+folders (`chain0/char/pc/kosmos.glb`). For one model,
+`python cli.py model --dump out/dump --path 'char\pc\kosmos.lex' --out kosmos.glb`.
 
 ## What is on the disc
 
@@ -117,15 +116,10 @@ skeleton for eyes and mouth.
 
 ## What is not done
 
-* **Motion.** The clips are located and not decoded, so the models do not
-  move. `chain0/motion/` holds 176 `.fpk` files; the 55 named `*_cf.fpk`
-  are `FPK` packs of `FCV` clips (`kosmos_cf.fpk` has 31 `FCV` headers;
-  looked at on the USA disc, 2026-11-21). A clip is a frame count, the
-  skeleton's name, then one record per skeleton block in `.jnt` block order
-  with nine channels (position, rotation and scale, three each). A constant
-  channel stores one float; a keyed channel stores packed keys whose format
-  has not been read. The Episode II and III kits export motion as glTF
-  animations; their format is not this one.
+* **Motion is decoded** and is no longer on this list: see
+  [MOTION.md](MOTION.md). What stays open there is the comparison with the
+  running game, skirts and wind in the hair and cloth simulation, and face
+  animation.
 * **Blend shapes** (weight format 1024) are ignored.
 * **Two vertex formats and two weight formats** are skipped, as above;
   whatever is skipped is listed in the `.glb`'s `extras`.

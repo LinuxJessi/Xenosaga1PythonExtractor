@@ -176,6 +176,7 @@ class Skeleton:
 
 
 _IDENT = [[1.0, 0, 0, 0], [0, 1.0, 0, 0], [0, 0, 1.0, 0], [0, 0, 0, 1.0]]
+FACE_PARENT_BLOCK = 48      # ACT_JOINT_HEAD: the body block a face model follows
 
 
 def _matmul(a, b):
@@ -731,17 +732,31 @@ def to_glb(model: ParsedLex, png: Optional[bytes], tex_size: tuple[int, int],
             cjb = csk.joint_blocks
             cmap = {jid: cjb[k] for k, jid in enumerate(cids) if k < len(cjb)}
             cblock_to_id = {b: j for j, b in cmap.items()}
+            # a face model hangs off the body's head joint: the game copies
+            # that joint's matrix into the face skeleton every frame (JC_face,
+            # attached at ACT_JOINT_HEAD = block 48 by ACT_setRelation), so
+            # the face's root blocks become children of body block 48 and
+            # keep their place in the rest pose
+            head = None
+            if (prefix.rstrip("/").lower().endswith("face") and len(skeleton.types) > FACE_PARENT_BLOCK
+                    and skeleton.types[FACE_PARENT_BLOCK] == 2):
+                head = FACE_PARENT_BLOCK
             for i, t in enumerate(csk.types):
-                q = _quat_from_matrix(csk.local_matrix(i))
                 label = (f"{prefix}j{cblock_to_id[i] % 100000}" if i in cblock_to_id
                          else f"{prefix}{kind.get(t, 'blk')}{i}")
                 cm = csk.local_matrix(i)
+                if head is not None and csk.parents[i] is None:
+                    cm = _matmul(_invert_rigid(worlds[head]), cm)
+                q = _quat_from_matrix(cm)
                 nodes.append({"name": label,
                               "translation": [float(cm[0][3]), float(cm[1][3]), float(cm[2][3])],
                               "rotation": [float(x) for x in q]})
             for i, pp in enumerate(csk.parents):
                 if pp is None:
-                    roots.append(cbase + i)
+                    if head is not None:
+                        nodes[base + head].setdefault("children", []).append(cbase + i)
+                    else:
+                        roots.append(cbase + i)
                 else:
                     nodes[cbase + pp].setdefault("children", []).append(cbase + i)
             for jid, blk in cmap.items():
@@ -753,8 +768,22 @@ def to_glb(model: ParsedLex, png: Optional[bytes], tex_size: tuple[int, int],
         # glTF joint order must follow model.joint_ids (the JOINTS_0 index)
         joint_nodes = []
         ibm = bytearray()
+        face_head = (FACE_PARENT_BLOCK if len(skeleton.types) > FACE_PARENT_BLOCK
+                     and skeleton.types[FACE_PARENT_BLOCK] == 2 else None)
         for jid in model.joint_ids:
             nd = node_of_joint.get(jid)
+            if (nd is None and face_head is not None and model.companion_joints.get(
+                    jid, "").rstrip("/").lower().endswith("face")):
+                # a face merged without its own skeleton: it follows the
+                # head block as one piece (see the note on JC_face above).
+                # Each of its weight groups gets a node of its own under the
+                # head, because a node listed twice in a skin loses its
+                # second vertex group in Blender.
+                nd = len(nodes)
+                nodes.append({"name": f"{model.companion_joints[jid]}j{jid % 100000}"})
+                nodes[base + face_head].setdefault("children", []).append(nd)
+                node_of_joint[jid] = nd
+                world_of_joint[jid] = worlds[face_head]
             if nd is None:
                 joint_nodes.append(root); ibm += struct.pack("<16f", *(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1))
                 continue

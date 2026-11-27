@@ -364,3 +364,50 @@ JSON, retail id, TSV and numbered-paste formats. **`txserver.py`** /
 (per-launch token, loopback only), delegated to from `gui.Handler`.
 **`txbuild.py`** — the build: retail-id check, validate all, clone to
 `OUT.partial`, apply, font fix, read back, rename.
+
+## Motion (November 2026)
+
+**`fcv.py`** — the motion packs ([MOTION.md](MOTION.md)). `parse_fpk` /
+`parse_clip` / `read_pack` read a pack without its skeleton (the value
+mask says how many curves follow). The key stream ends where the game's
+does, at a 0xFFFF record or a record that is not type 4; with `strict`
+(the sweep and the disc self-test) a clip that does not end on its last
+byte is refused. `parse_rig` reads a `.jnt` the way the motion code sees
+it (block counts, `JNT_hairID`, the attribute key, limits, the bend
+sign), `_ranges` splits its blocks into the four ranges
+`JNT_computeMatrix` walks, `fits` says whether a clip's body records
+line up with it, and `eval_curve` is `FCV2_getPackVal`. `pose` gives
+world matrices for every block at a frame: body blocks read and built
+the way `JNT_getVal` and `JNT_constructMatrix` do (chain solver
+included), the next additional_primary_count blocks the way
+`JNT_getVal2` does, the hair and cloth blocks at rest. `simulate` runs
+those hair and cloth chains through the port of `EXM_CalcExMotion`:
+`exm_preset` is `EXM_PresetHair`, `exm_chains` lists the chains it
+solves, `exm_step` is one tick and `_exm_collide` is
+`EXM_CheckExCollision`. `bake` samples a clip into per-block
+translation, rotation and scale (through `simulate` when the skeleton
+has hair or cloth chains), and `add_to_glb` appends those as glTF
+animations to a `.glb` that `lex.to_glb` wrote (it finds the armature
+nodes by position, so `lex.py` knows nothing about motion). When a clip
+scales a block unevenly under a child turned against it, `add_to_glb`
+moves the blocks under it to the skeleton node (`_hang_off_root`) and
+bakes them in skeleton space, listed in the animation's
+`extras.skeleton_space_blocks`. `MotionIndex` is the `motion\` folder
+read once for `browse`, pairing clips and skeletons by attribute key;
+`sweep` is `motion --sweep`; `cli_model` and `cli_motion` are the two
+commands. `selftest()` runs hand-made packs, and with a disc the six
+party field packs.
+
+**`browse.ModelBuilder`** is the model pass of `build_browse` lifted into
+a class so that `cli.py model` and `browse` build the same `.glb` from one
+`.lex` (atlas, companions, skeleton).
+
+**`lex.to_glb`** now hangs a merged face on body block 48
+(`FACE_PARENT_BLOCK`, the game's `ACT_JOINT_HEAD`): one small node per
+face weight group under that block, so the face follows the head.
+Before, face vertices were bound to the armature's root and stayed put.
+
+**`docs/gallery/render_motion.py`** (run inside Blender) and
+**`docs/gallery/make_gif.py`** (Pillow) make the front-page GIFs; the
+commands are at the end of MOTION.md. They are not part of the kit's
+requirements.

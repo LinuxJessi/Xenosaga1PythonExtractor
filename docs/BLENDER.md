@@ -74,10 +74,38 @@ own (`kosmos_face.lex`, `kosmos_h_face.lex`). The companions are also
 written on their own, so `kosmos_face.glb` is there if you only want
 the head.
 
+## Playing the motion
+
+A model whose skeleton has motion clips on the disc comes with them: one
+action per clip, named after the pack and slot (`motion/kosmos_cf#01`).
+Select the armature, open the Dope Sheet in Action Editor mode (or the
+Animation workspace), pick an action from the list and press Space. Set
+the scene to 30 frames a second (Output properties ▸ Frame Rate) before
+importing: each key then lands on a whole frame. The importer turns the
+file's times into frames at the scene's rate, so at Blender's default of
+24 the clips still play at the right speed, but their keys fall between
+frames. Changing the rate after importing changes the speed. `browse`
+attaches the clips made for each skeleton; for one model with chosen
+clips:
+
+```sh
+python cli.py model --dump out/dump --path 'char\pc\kosmos.lex' --out kosmos.glb \
+       --motion 'motion\kosmos_cf.fpk#1,3'
+```
+
+The legs are baked: the game solves them toward foot targets every frame
+and the action holds the result, one key per frame. The targets
+themselves are not in the action. The hair and cloth bones are baked
+too: the clip does not store them, so the kit runs the game's hair
+simulation and keys where it puts them. The face is a set of small bones under
+the head bone and follows it. Details in [MOTION.md](MOTION.md).
+
 ## Known gaps
 
-* **No animation.** The motion clips are located on the disc but their keys
-  are not decoded yet ([MODELS.md](MODELS.md), "What is not done").
+* **Animation has not been compared with the running game.** Hair and
+  cloth are baked from a port of the game's simulation; chains the game
+  treats as skirts keep their rest pose, and there is no wind
+  ([MOTION.md](MOTION.md), "What is not done").
 * Two map meshes use vertex formats the parser skips, and blend shapes
   are ignored. Anything skipped is listed in the `.glb`'s `extras`.
 

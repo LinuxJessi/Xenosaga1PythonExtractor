@@ -2,6 +2,93 @@
 
 Newest first: what changed, why, and what it means for you.
 
+## 2026-11-26 — hair and cloth move, legs follow the game more closely
+
+**Hair and cloth are simulated.** The clips store nothing for them. The
+game runs the chains from `JNT_hairID` to the end of the secondary
+blocks through `EXM_CalcExMotion` while it plays, with the per-skeleton types
+and collision tables `EXM_PresetHair` picks from the `.jnt` name. The
+kit now has a port of that code (`fcv.simulate`, `fcv.exm_step`): two
+ticks a frame, gravity, the pull back toward the stiff chain, link
+length, the floor, sphere and capsule collision, and the turn of each
+link toward the next. The chains settle for 120 ticks before the first
+frame, and a looping clip is played through once first. The result is
+baked into the actions like the legs. This is what brings back KOS-MOS's
+back hair in the run: left at rest it was welded to her head, and when
+she tipped her head back it sank into her back. Not followed: wind (off
+by default in the game), the hip sway, and skirt collision, so chains the
+game treats as skirts keep their rest pose. The simulation has not been
+compared with the running game.
+
+**Legs and other pose fixes from the decomp.** Body blocks are now read
+and built the way `JNT_getVal` and `JNT_constructMatrix` do it, not
+`JNT_getVal2`, which in normal play the game uses only for the blocks
+after hair and cloth. The visible change is the legs: in a two-link chain without a
+pivot the chain root now takes the first link's X rotation and scale
+before the bend, as `JNT_constructMatrix` does (0x310158 to 0x310168),
+which turns the thighs and moves the knees; the feet stay on their
+targets. The root block's flag is read when mask bit
+7 is set, as the game reads it. Blocks after hair and cloth follow
+`JNT_getVal2`'s own rules (a missing scale component is kept from the
+block before; the record they read is the one after the body's). A block
+that a clip scales unevenly, with a child turned against it, cannot be
+written as a translation, rotation and scale under its parent in glTF;
+the blocks under it are now hung off the skeleton node and keyed in
+skeleton space (`boss_017`, `guno_013`; no party clip), and the `.glb`
+read back matches the posed matrices.
+
+**Robustness.** A clip's key stream ends where the game's does, at a
+0xFFFF record or at any record that is not type 4, and bytes after it are
+allowed (`motion --sweep` still requires every clip to end on its last
+byte; all 4,147 do). A record that runs past its clip is an error, not a
+crash. One clip that cannot be posed no longer costs the rest of the
+pack its animations. A bad slot list (`#x`, `#`, `#1,`) or a slot the
+pack does not have is an error with exit code 2, and `model` and
+`motion` exit with 1 when a named clip or a pack could not be read.
+
+**Pairing by the game's key.** A clip is attached to a skeleton when the
+32-bit key the game makes from the 8-byte name field matches (u32 word
+0 · 31 + u32 word 1), not when the names compare equal; on the USA disc
+the two give the same pairs. Only the body records now have to line up
+with their blocks: the records after the body's are not read at their
+own index (see [MOTION.md](MOTION.md), "Hair and cloth"). That second
+change adds 14 clips: 3,833 pair (3,819 before), in 6,876
+clip-skeleton pairs, all posed by `motion --sweep`, and no clip lost
+its pairing. In the default `motion\` packs the new ones are `boss_029`
+#0 and `guno_012` #29 and #30; `browse --kinds models` now gives 171
+models motion, 2,611 actions in all.
+
+## 2026-11-21 — the models move
+
+**Motion is decoded.** The `.fpk` packs in `motion\`, `mtnpack\` and
+`nisimori\` hold the game's animation as `FCV` clips, and the kit now
+reads them the way the executable does (it keeps its function names;
+the reader follows `FCV2_getPackValue`, `JNT_getVal` and
+`JNT_constructMatrix`). Every clip on
+the disc reads to its last byte: 4,147 clips, 710,304 frames, on the USA
+disc and on *Reloaded* alike.
+
+**What you get.** `browse --kinds models` writes each model with the
+clips made for its skeleton as Blender actions (`kosmos.glb` has 37;
+since the 2026-11-26 changes above, 171 models get motion, 2,611 actions
+in all).
+`python cli.py model` writes one model with the packs and slots you
+choose, and `python cli.py motion` lists a pack or reads them all. Two
+new cards in the app do the same. The legs are solved toward their foot
+targets every frame, as the game solves them, and baked at 30 keys a
+second.
+
+**Faces follow the head.** A merged face used to be bound to the
+armature's root, which nobody noticed while nothing moved. It now hangs
+on the head block the game attaches it to.
+
+**Not done:** nothing has been compared with the running game; hair and
+cloth, which the game simulates, were left at rest in this first version
+(simulated since 2026-11-26, see above); faces do not animate; cutscene
+packs are attached only when you name them.
+[MOTION.md](MOTION.md) has the format, the checks and the commands that
+made the pictures on the front page.
+
 ## 2026-11-21 — the translation editor, and a guide anyone can follow
 
 **A translation editor in the app.** One page lists every string a

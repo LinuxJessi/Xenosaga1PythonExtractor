@@ -414,6 +414,62 @@ half-bone offset you expect). No capture is needed; the tool stays as
 the verification method.
 ```
 
+## FPK motion packs and FCV clips (`fcv.py`) — read from the executable
+
+The full description is [MOTION.md](MOTION.md); the layout in brief:
+
+```
+FPK: "FPK\0"; u16 version @4 (3); u32 slot count @8; u32 offsets[count]
+  @0x10; u32 [count] after them (1 or 2, not interpreted). Slots may
+  share a clip.
+FCV: "FCV\0"; u16 format @4 (3); u16 frame count @6; u16 first frame @8;
+  u16 last frame @10; s16 frame offset @12; u32 attribute bytes @0x10,
+  then records {u16 size, u16 type, payload}: type 1 = name[8] of the
+  skeleton (the game keys it as u32 word0 * 31 + word1), type 2 = frame
+  range {u8 selector (bits 0-6 attribute index; bit 7 set = play range,
+  clear = reset range; every disc record is selector 0), s8 speed/32,
+  u16 first, u16 last}. Keys start at 0x10 + attribute bytes.
+Keys, one record per .jnt block in block order:
+  u16 size (4|12), u16 4, u16 flags, u16 value mask,
+  [u16 translation link, u16 pivot link, u16 rotation link, u16 0]
+  then one curve per set mask bit (0-2 T, 3-5 R as Z,Y,X, 6-8 S; on the
+  root record the game reads the flag value when bit 7 is set, and the
+  disc's clips store it as bit 9, always together with bit 7):
+    u16 key count, u16 flags whose low nibble is the kind: 0 = nothing;
+    1 = f32; 3 = keys of
+    {u16 type, u16 time, f32 value [, f32 tangent | f32 in, f32 out]}
+    type 0 linear, 1 Hermite in/out, 2 Hermite flat, 3 step, 4 Hermite
+    one tangent. seconds = time * frame count / 65535 / 30 from format 2;
+    below format 2, time * (last - first frame) / 65535 / 30.
+  flags 0xFFFF, or a record that is not type 4, ends the clip; flags
+  0x8000 marks the root block.
+```
+
+What the motion code adds to the `.jnt` description above (same
+functions, `JNT_getVal`, `JNT_getVal2`, `JNT_computeMatrix` and
+`JNT_setModel`): header u16 @6 is the block count, @8 the primary count,
+@0xA the secondary count, @0xC additional_primary_count and @0xE
+additional_secondary_count (`kosmos.jnt`: 170, 74, 46, 32, 18); the u32
+@0x10 is the byte size of the attribute records that start there
+(version 2 and later), and the blocks follow them. A clip drives the
+body, blocks 0 to `JNT_hairID`: the primary count, plus the secondary
+count when there is no type-5 attribute record, plus the type-5 tag's
+low half when its kind is 0x8A (95 on `kosmos.jnt`, tag 0x8A0015). The
+blocks from there to primary + secondary are hair and cloth, which the
+game simulates, then additional_primary_count blocks read through
+`JNT_getVal2`, then static ones; [MOTION.md](MOTION.md), "Hair and
+cloth", has the ranges. In a
+block, type 3 is the root of a chain, 2 a link, 4 its end (so "translate"
+and "bone end" above are chain root and chain end), 5 a node that also
+takes scale; +20 is an offset to rotation limits; +30, called parent
+above, is the block whose matrix this one starts from. The engine's own
+64-byte record starts at +16 of the block as drawn above, so the two
+floats shown at +0 and +8 belong to the block before: the one at +8
+picks, by its sign, which way a solved chain bends at that link.
+
+Read without a skeleton, all 4,147 clips of the 248 packs end on their
+last byte (`python cli.py motion --dump out/dump --sweep`).
+
 ## FL00 event containers / Java (`evt.py`)
 
 `.evt` = FL00 wrapper of real Java class files, format 45.3 (JDK 1.1,

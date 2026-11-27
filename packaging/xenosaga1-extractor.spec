@@ -81,6 +81,8 @@ HIDDEN = ["arx", "browse", "carve", "chains", "evt", "iso9660", "toc",
           "txtarget", "txlangs", "txsource", "txspeakers", "txbackup",
           # self-test and the modules only it (or browse, lazily) imports
           "selftest", "region", "lex", "evt_unpack", "class_map", "dump_symbols",
+          # motion: imported inside cli.py model / motion and by browse
+          "fcv",
           "numpy"]
 
 # fonttools + uharfbuzz draw new scripts' glyphs from TrueType fonts (txtarget,

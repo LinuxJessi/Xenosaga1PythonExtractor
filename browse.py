@@ -1338,6 +1338,117 @@ def _load(src: Path, bump) -> bytes:
     return data
 
 
+class ModelBuilder:
+    """One ``.lex`` of a dump -> ``.glb`` bytes, with its atlas, companion
+    models and skeleton.  ``browse`` runs it over the whole dump and
+    ``cli.py model`` over one file; both get the same model."""
+
+    def __init__(self, dump: Path, code_dir: Path, bump=None):
+        import lex as lexmod
+        self.lexmod = lexmod
+        self.dump = dump
+        self.bump = bump or (lambda key, n=1: None)
+        self.sources = list(_dump_files(dump, (".lex",)))
+        self.xtxs = {parent: {x.stem.lower(): x for x in parent.glob("*.xtx")}
+                     for parent in {s.parent for s in self.sources}}
+        self.rect_index = scan_ovl_descriptors(code_dir)
+        self.cbp_index: dict = {}
+        for name, descs in self.rect_index.items():
+            cbps = self.cbp_index.setdefault(name, [])
+            for d in descs:
+                if d[4] not in cbps:
+                    cbps.append(d[4])
+        # companions: a .lex with no atlas of its own (kosmos_face.lex —
+        # face, eyes, mouth, lashes) binds onto the sibling atlas whose stem
+        # is the longest prefix of its own; its meshes are merged into that
+        # body's .glb (and still written on their own)
+        self.companions: dict[Path, list[Path]] = {}
+        for s in self.sources:
+            stem = s.stem.lower()
+            if stem in self.xtxs[s.parent]:
+                continue
+            owners = [t for t in self.xtxs[s.parent] if stem.startswith(t)]
+            if owners:
+                body = s.with_name(self.xtxs[s.parent][max(owners, key=len)].stem + ".lex")
+                if body.is_file():
+                    self.companions.setdefault(body, []).append(s)
+        self.atlas_cache: dict[Path, Optional[tuple[int, int, bytes]]] = {}
+
+    def build(self, src: Path):
+        """(glb bytes, parsed model, atlas or None, fcv.Rig or None), or None
+        for a file with nothing to draw.  Raises lex.LexError for a file the
+        parser cannot read."""
+        lexmod, bump = self.lexmod, self.bump
+        data = _load(src, bump)
+        if not data:
+            return None
+        model = lexmod.parse_lex(data)
+        for comp in sorted(self.companions.get(src, [])):
+            cdata = _load(comp, bump)
+            try:
+                cmodel = lexmod.parse_lex(cdata) if cdata else None
+            except lexmod.LexError:
+                cmodel = None
+            if cmodel is not None:
+                lexmod.merge_companion(model, cmodel, comp.stem + "/")
+                bump("models_companions_merged")
+        if not model.triangle_count:
+            bump("models_empty")
+            return None
+        # atlas: own .xtx, else the sibling whose stem is the longest
+        # prefix of this stem (kosmos_face -> kosmos.xtx), decoded with
+        # every .lex that binds onto it (same rule as the textures job)
+        stem = src.stem.lower()
+        siblings = self.xtxs.get(src.parent, {})
+        owners = [t for t in siblings if stem.startswith(t)]
+        atlas = siblings[max(owners, key=len)] if owners else None
+        tex = None
+        if atlas is not None:
+            if atlas not in self.atlas_cache:
+                lexes = [_load(atlas.with_suffix(".lex"), bump)] if atlas.with_suffix(".lex").is_file() else []
+                for lx in sorted(atlas.parent.glob("*.lex")):
+                    ls = lx.stem.lower()
+                    if (ls != atlas.stem.lower() and ls not in siblings
+                            and ls.startswith(atlas.stem.lower())
+                            and max((t for t in siblings if ls.startswith(t)), key=len) == atlas.stem.lower()):
+                        lexes.append(_load(lx, bump))
+                xdata = _load(atlas, bump)
+                dec = decode_xtx(xdata, [l for l in lexes if l],
+                                 self.cbp_index.get(atlas.name.lower()),
+                                 self.rect_index.get(atlas.name.lower())) if xdata else None
+                self.atlas_cache[atlas] = ((dec[0], dec[1], png_bytes(dec[0], dec[1], dec[2]))
+                                           if dec else None)
+            tex = self.atlas_cache[atlas]
+        skeleton = rig = None
+        jnt = src.with_suffix(".jnt")
+        if jnt.is_file():
+            try:
+                jdata = _load(jnt, bump)
+                skeleton = lexmod.parse_jnt(jdata)
+                bump("models_with_skeleton")
+                # a bind pose captured from the running game
+                # (docs/research/pine_pose.py) sits next to the .jnt
+                pose = jnt.with_suffix(".pose.json")   # optional: a pose captured from the game
+                if pose.is_file():
+                    import json
+                    skeleton.apply_pose(json.loads(pose.read_text())["blocks"])
+                    bump("models_with_captured_pose")
+                else:
+                    # motion is written against the rest pose the files give,
+                    # so a model with a captured pose gets none
+                    import fcv
+                    try:
+                        rig = fcv.parse_rig(jdata)
+                    except (fcv.FcvError, ValueError):
+                        rig = None
+            except (lexmod.LexError, ValueError, KeyError):
+                bump("models_bad_jnt")
+        glb = lexmod.to_glb(model, tex[2] if tex else None,
+                            (tex[0], tex[1]) if tex else (1024, 256),
+                            name=src.stem, skeleton=skeleton)
+        return glb, model, tex, rig
+
+
 def build_browse(out_dir: Path, kinds: Iterable[str], rate: int = VOICE_RATE,
                  log=lambda s: print(s, file=sys.stderr)) -> dict:
     dump = out_dir / "dump"
@@ -1492,102 +1603,45 @@ def build_browse(out_dir: Path, kinds: Iterable[str], rate: int = VOICE_RATE,
             f"decompressed) -> textures_png/_embedded/ + embedded_textures.csv")
 
     if "models" in kinds:
+        import fcv
         import lex as lexmod
 
         mdir = browse / "models"
-        srcs = list(_dump_files(dump, (".lex",)))
-        xtxs = {s.parent: {x.stem.lower(): x for x in s.parent.glob("*.xtx")}
-                for s in srcs}
-        rect_index = scan_ovl_descriptors(browse / "code")
-        cbp_index = {}
-        for name, descs in rect_index.items():
-            cbps = cbp_index.setdefault(name, [])
-            for d in descs:
-                if d[4] not in cbps:
-                    cbps.append(d[4])
-        # companions: a .lex with no atlas of its own (kosmos_face.lex —
-        # face, eyes, mouth, lashes) binds onto the sibling atlas whose stem
-        # is the longest prefix of its own; its meshes are merged into that
-        # body's .glb (and still written on their own)
-        companions: dict[Path, list[Path]] = {}
-        for s in srcs:
-            stem = s.stem.lower()
-            if stem in xtxs[s.parent]:
-                continue
-            owners = [t for t in xtxs[s.parent] if stem.startswith(t)]
-            if owners:
-                body = s.with_name(xtxs[s.parent][max(owners, key=len)].stem + ".lex")
-                if body.is_file():
-                    companions.setdefault(body, []).append(s)
+        builder = ModelBuilder(dump, browse / "code", bump)
+        srcs = builder.sources
+        motion = fcv.MotionIndex(dump)
+        for failed, why in motion.failed:
+            log(f"  motion pack {failed.relative_to(dump)} not read: {why}")
         log(f"models: converting {len(srcs)} .lex -> glTF binary "
-            f"({sum(len(v) for v in companions.values())} companion models "
-            f"merged into their bodies) ...")
-        atlas_cache: dict[Path, Optional[tuple[int, int, bytes]]] = {}
+            f"({sum(len(v) for v in builder.companions.values())} companion models "
+            f"merged into their bodies; motion clips for "
+            f"{len(motion.by_name)} skeleton names) ...")
         tri_total = 0
         for i, src in enumerate(srcs, 1):
-            data = _load(src, bump)
-            if not data:
-                continue
             try:
-                model = lexmod.parse_lex(data)
+                built = builder.build(src)
             except lexmod.LexError as e:
                 bump("models_unparsed")
                 log(f"  skip {src.relative_to(dump)}: {e}")
                 continue
-            for comp in sorted(companions.get(src, [])):
-                cdata = _load(comp, bump)
-                try:
-                    cmodel = lexmod.parse_lex(cdata) if cdata else None
-                except lexmod.LexError:
-                    cmodel = None
-                if cmodel is not None:
-                    lexmod.merge_companion(model, cmodel, comp.stem + "/")
-                    bump("models_companions_merged")
-            if not model.triangle_count:
-                bump("models_empty")
+            if built is None:
                 continue
-            # atlas: own .xtx, else the sibling whose stem is the longest
-            # prefix of this stem (kosmos_face -> kosmos.xtx), decoded with
-            # every .lex that binds onto it (same rule as the textures job)
-            stem = src.stem.lower()
-            siblings = xtxs[src.parent]
-            owners = [t for t in siblings if stem.startswith(t)]
-            atlas = siblings[max(owners, key=len)] if owners else None
-            tex = None
-            if atlas is not None:
-                if atlas not in atlas_cache:
-                    lexes = [_load(atlas.with_suffix(".lex"), bump)] if atlas.with_suffix(".lex").is_file() else []
-                    for lx in sorted(atlas.parent.glob("*.lex")):
-                        ls = lx.stem.lower()
-                        if (ls != atlas.stem.lower() and ls not in siblings
-                                and ls.startswith(atlas.stem.lower())
-                                and max((t for t in siblings if ls.startswith(t)), key=len) == atlas.stem.lower()):
-                            lexes.append(_load(lx, bump))
-                    xdata = _load(atlas, bump)
-                    dec = decode_xtx(xdata, [l for l in lexes if l],
-                                     cbp_index.get(atlas.name.lower()),
-                                     rect_index.get(atlas.name.lower())) if xdata else None
-                    atlas_cache[atlas] = ((dec[0], dec[1], png_bytes(dec[0], dec[1], dec[2]))
-                                          if dec else None)
-                tex = atlas_cache[atlas]
-            skeleton = None
-            jnt = src.with_suffix(".jnt")
-            if jnt.is_file():
-                try:
-                    skeleton = lexmod.parse_jnt(_load(jnt, bump))
-                    bump("models_with_skeleton")
-                    # a bind pose captured from the running game
-                    # (docs/research/pine_pose.py) sits next to the .jnt
-                    pose = jnt.with_suffix(".pose.json")   # optional: a pose captured from the game
-                    if pose.is_file():
-                        import json
-                        skeleton.apply_pose(json.loads(pose.read_text())["blocks"])
-                        bump("models_with_captured_pose")
-                except (lexmod.LexError, ValueError, KeyError):
-                    bump("models_bad_jnt")
-            glb = lexmod.to_glb(model, tex[2] if tex else None,
-                                (tex[0], tex[1]) if tex else (1024, 256),
-                                name=src.stem, skeleton=skeleton)
+            glb, model, tex, rig = built
+            if rig is not None:
+                clips = motion.clips_for(rig)
+                if clips:
+                    try:
+                        glb, summary = fcv.add_to_glb(glb, rig, clips)
+                        n = sum(1 for c in summary if c["written"])
+                        if n:
+                            bump("models_with_motion")
+                            bump("motion_clips", n)
+                    except (fcv.FcvError, ValueError, ZeroDivisionError, IndexError) as e:
+                        if "no armature" in str(e):      # an unskinned model: nothing to move
+                            bump("models_motion_no_armature")
+                        else:
+                            bump("models_motion_failed")
+                            log(f"  no motion on {src.relative_to(dump)}: {e}")
             dest = mdir / src.relative_to(dump).with_suffix(".glb")
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(glb)
@@ -1603,7 +1657,9 @@ def build_browse(out_dir: Path, kinds: Iterable[str], rate: int = VOICE_RATE,
             f"{tri_total:,} triangles; {stats.get('models_companions_merged', 0)} "
             f"companions merged; {stats.get('models_with_skeleton', 0)} with a "
             f"skeleton ({stats.get('models_with_captured_pose', 0)} with a captured "
-            f"bind pose); {stats.get('models_unparsed', 0)} unparsed, "
+            f"bind pose); {stats.get('models_with_motion', 0)} with motion "
+            f"({stats.get('motion_clips', 0)} clips); "
+            f"{stats.get('models_unparsed', 0)} unparsed, "
             f"{stats.get('models_with_warnings', 0)} with warnings)")
 
     if "audio" in kinds:

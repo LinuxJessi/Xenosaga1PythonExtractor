@@ -35,7 +35,7 @@ MODULES = (
     "iso9660", "chains", "toc", "arx", "carve", "evt", "evt_unpack", "class_map",
     "repack", "textpack", "evttext", "ovltext", "font", "glyphs", "langpack",
     "statfont", "subs", "ssd", "ssd_render", "lex", "browse", "pinkhair",
-    "pseudoloc", "dump_symbols", "region",
+    "pseudoloc", "dump_symbols", "region", "fcv",
     "txcodec", "txlangs", "txtarget", "txsource", "txspeakers", "txbackup",
     "txproject", "txcatalog", "txfam_umn", "txfam_evt", "txfam_ovl", "txfam_fix",
     "txbuild", "txeditor_page", "txserver", "gui",
@@ -188,6 +188,12 @@ def _region_synthetic(r: _Run) -> None:
     r.step("region: build identification", _quiet(lambda: region.self_test(None)))
 
 
+def _motion_synthetic(r: _Run) -> None:
+    import fcv
+    r.step("motion: hand-made pack, curves, a solved chain, glTF animation (fcv)",
+           _quiet(lambda: fcv.selftest(None)))
+
+
 def _editor_synthetic(r: _Run) -> None:
     import txbackup
     import txcatalog
@@ -280,6 +286,10 @@ def _disc(r: _Run, iso_path: str, full: bool, scratch: Optional[str]) -> None:
     r.step("evttext: every dialogue container rebuilds to its retail bytes",
            _quiet(lambda: evttext.selftest(iso_path)))
 
+    import fcv
+    r.step("motion: the party's field packs read to their last byte, line up with their "
+           "skeletons, solved chains land on their targets", _quiet(lambda: fcv.selftest(iso_path)))
+
     if region.info(iso_path).build != "usa":
         # the editor's rows are keyed to the USA disc (txsource.py); on another
         # build these checks would test the wrong thing
@@ -322,7 +332,7 @@ def self_test(iso: Optional[str] = None, full: bool = False, scratch: Optional[s
     print("--- without a disc", flush=True)
     _imports(r)
     for part in (_arx_synthetic, _text_synthetic, _font_synthetic, _music_synthetic, _region_synthetic,
-                 _editor_synthetic):
+                 _motion_synthetic, _editor_synthetic):
         try:
             part(r)
         except Exception as e:
