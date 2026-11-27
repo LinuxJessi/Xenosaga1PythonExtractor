@@ -218,12 +218,12 @@ The kit runs the hair and cloth chains through a port of `EXM_CalcExMotion`
 (exm_1.c) two ticks a frame. The port follows the per-name types and
 collision tables of `EXM_PresetHair`, gravity, the pull back toward the
 stiff chain, link length, the floor, the sphere and capsule collision
-(`EXM_CheckExCollision`), the bend of the ALT_SHAPES flag and the turn of
-each link toward the next (`OrientExMotionJoint`). Before the frames are
+(`EXM_CheckExCollision`), the skirt collision (`EXM_CheckSkirtCollision`),
+Jr.'s coat width (`AdjustJrCoatWidth`), the bend of the ALT_SHAPES flag and
+the turn of each link toward the next (`OrientExMotionJoint`). Before the frames are
 taken the chains settle for 120 ticks on the first frame, and a clip that
-ends where it started is played through once first. Wind (off by default),
-the hip sway (set only by hair_test.c) and the skirt collision are not
-followed, so skirt-type chains keep their rest pose. A skeleton whose name
+ends where it started is played through once first. Wind (off by default)
+and the hip sway (set only by hair_test.c) are not followed. A skeleton whose name
 `EXM_PresetHair` does not know gets type 0 for every chain (in the game it
 would keep whatever an earlier skeleton left there). On KOS-MOS the back
 hair (`33_kosmos_hair`, weighted to the head and to chain 95-100) gets
@@ -231,6 +231,23 @@ type 3 with ALT_SHAPES and collides with two spheres on her back. Leaving
 it at rest was what buried it inside her back in the run: the rest pose
 welds it to the head, and the run tips her head back about 35 degrees
 against her chest.
+
+Skirts, dresses and long coats are chains of a skirt type: instead of the
+collision tables, each joint is kept out of the cone the two legs sweep
+(thigh to knee, thigh to shin, and on long coats blocks 54/66 down to
+60/72). It is measured from block 11 across and block 13 up, along the way
+block 36 faces (block 14 for the split skirt `BOSS030` uses). Each type
+sets which way the joint is pushed (front, back, a side or a corner), and
+the skeleton's name sets how wide the cone is. A hem lift keeps the front
+or back corners above the knees. On Jr. the coat used to hang at rest
+while his legs walked through it. Now it swings clear: the closest a coat
+joint comes to his legs in field clip 2 goes from 1.8 cm to 5.5 cm. The
+formula takes positions relative to block 11, so on a skeleton whose block
+11 is far from its legs the push is far off too: in `BOSS030`'s clips its
+legs move up to about 16 m from block 11, and skirt joints are thrown
+about as far. The game runs the
+same arithmetic on the same blocks, but this has not been checked in the
+running game.
 
 ## What the kit writes
 
@@ -325,9 +342,9 @@ The clips have no names on the disc beyond their slot numbers, so "walk",
   playback rate have not been compared with the running game in PCSX2.
   `docs/research/pine_pose.py` reads the engine's matrix table and would be
   the way to do it.
-* **Hair and cloth are simulated, without wind or skirt collision.** See
-  **Hair and cloth** above. Skirt-type chains keep their rest pose, and the
-  simulation has not been compared with the running game.
+* **Hair and cloth are simulated, without wind.** See **Hair and cloth**
+  above. The simulation, skirts included, has not been compared with the
+  running game.
 * **Faces do not animate.** No clip was found that drives a face skeleton's
   eyes or mouth, and the kit did not look for where the game does it.
 * **Clips for another skeleton** are read but only posed when asked for by
@@ -361,7 +378,19 @@ python docs/gallery/make_gif.py run docs/images/front/motion-kosmos-run.gif --he
 blender -b --factory-startup --python docs/gallery/render_motion.py -- turn 36 \
        'kosmos.glb=motion/kosmos_cf#00' --size 420 560 --turntable
 python docs/gallery/make_gif.py turn docs/images/front/kosmos-turntable.gif --height 400 --ms 83
+python cli.py model --dump out/dump --path 'char\pc\jr.lex' --out jr.glb \
+       --motion 'motion\jr_cf.fpk#1,3'
+blender -b --factory-startup --python docs/gallery/render_motion.py -- jrrun 10 \
+       'jr.glb=motion/jr_cf#03' --size 480 560 --fit-all --cam 60 8
+python docs/gallery/make_gif.py jrrun docs/images/front/motion-jr-run.gif --height 400 --ms 66
+blender -b --factory-startup --python docs/gallery/render_motion.py -- jrwalk 13 \
+       'jr.glb=motion/jr_cf#01' --size 480 560 --fit-all --cam 60 8
+python docs/gallery/make_gif.py jrwalk docs/images/front/motion-jr-walk.gif --height 400 --ms 66
 ```
+
+Jr.'s two GIFs (the run on the front page, the walk in
+[BLENDER.md](BLENDER.md#a-moving-model-step-by-step)) were made with the
+skirt collision.
 
 `render_motion.py` runs inside Blender; `make_gif.py` needs Pillow. Neither is
 part of the kit's own requirements.

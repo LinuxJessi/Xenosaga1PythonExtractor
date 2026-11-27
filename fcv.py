@@ -54,8 +54,8 @@ on the USA disc that gives exactly the pairs comparing names would.
 
 * ``EXM_CalcExMotion`` (the hair and cloth blocks from ``JNT_hairID`` to
   primary + secondary): simulated a game tick at a time when a clip is baked
-  (``simulate``); ``pose`` alone leaves them at rest.  Wind, the hip sway
-  and the skirt collision are not followed (skirt chains stay at rest).
+  (``simulate``); ``pose`` alone leaves them at rest.  Wind and the hip
+  sway are not followed.
 
 Not followed: ``JNT_computeHair`` (only hair_test.c uses it),
 ``JNT_interpolate`` (blending between two clips), and the move back onto
@@ -874,11 +874,14 @@ def pose(rig: Rig, clip: Optional[Clip], frame: float, stats: Optional[dict] = N
 #
 # Followed here: gravity, the pull, the link length, the floor
 # (EX_ANIM_FLAG_NO_GROUND off: 0.07 above the ground under the character),
-# EXM_CheckExCollision (spheres, capsules), the bend of
+# EXM_CheckExCollision (spheres, capsules), EXM_CheckSkirtCollision (a chain
+# of a skirt type, EX_HAIR_FLAG_SKIRT, is kept out of the cone the legs
+# sweep instead), AdjustJrCoatWidth (EX_HAIR_FLAG_COAT_WIDTH), the bend of
 # EX_HAIR_FLAG_ALT_SHAPES and OrientExMotionJoint.  Not followed: wind (off
-# unless a map turns it on), the hip sway (moved_hair_sway is only set by
-# hair_test.c), and EXM_CheckSkirtCollision: a chain of a skirt type
-# (EX_HAIR_FLAG_SKIRT) keeps its rest pose.
+# unless a map turns it on) and the hip sway (moved_hair_sway is only set
+# by hair_test.c).  Where the game would divide by a leg section of length
+# zero (the PS2 gives the largest float, not infinity) the skirt push for
+# that section is left out.
 
 def _f32(x):
     return struct.unpack("<f", struct.pack("<f", x))[0]
@@ -901,6 +904,17 @@ _HAIRPARA = [tuple(_f32(v) if not isinstance(v, tuple) else tuple(_f32(u) for u 
 
 # EX_HAIR_FLAG_* (ExHairTypeSelection.flags)
 _ALT, _KIND5, _KIND6, _KIND7, _SKIRT = 0x1, 0x2, 0x8, 0x10, 0x400
+_COAT, _SPLIT_A, _SPLIT_B, _LONG = 0x20, 0x80, 0x100, 0x8000
+# the skirt profile angle (EX_SKIRT_FLAG_ANGLE_*) and the hem lifts
+_A180, _A90, _A270, _A0, _HEM_A, _HEM_B = 0x800, 0x1000, 0x2000, 0x4000, 0x10000, 0x20000
+# EX_HAIR_SKIRT_<degrees>
+_S0, _S180 = _SKIRT | _A0, _SKIRT | _A180
+_S90, _S270 = _SKIRT | _A90, _SKIRT | _A270
+_S45, _S315 = _S0 | _A90, _S0 | _A270
+_S135, _S225 = _S180 | _A90, _S180 | _A270
+# the four corners most skirts use, and with the back pair's hem lifted
+_CORNERS = [_S45, _S315, _S135, _S225]
+_CORNERS_A = [_S45, _S315, _S135 | _HEM_A, _S225 | _HEM_A]
 
 # the collision tables: (block, kind, (x, y, z, radius) from the block,
 # capsule end (x, y, z, radius)); kinds 1 sphere, 2 capsule, 3 keep inside,
@@ -958,14 +972,21 @@ _COL = {k: [(j, kd, tuple(_f32(x) for x in s), tuple(_f32(x) for x in e))
 _AUTO = "auto"                           # EX_HAIR_TYPE_AUTO
 
 
+# skirtColliSize, skirtColliSizeB, skirtColliSizeS, skirtColliFootRad as the
+# game starts them (EXM_PresetHair sets all four for every skirted name)
+_SKIRT_SIZES = (1.0, 1.0, 1.0, 0.05)
+
+
 def exm_preset(name: str):
-    """``EXM_PresetHair`` for a ``.jnt`` name: (types, table).  ``types`` is
-    {chain number: (flags, kind)} (a chain it gives nothing gets flags 0,
-    type 0: the game would read what an earlier skeleton left there), None
-    (EX_HAIR_TYPE_NONE: every chain type 0, no collision) or "auto"
-    (GetHairTypeSelection picks per chain); ``table`` a ``_COL`` key."""
+    """``EXM_PresetHair`` for a ``.jnt`` name: (types, table, sizes).
+    ``types`` is {chain number: (flags, kind)} (a chain it gives nothing gets
+    flags 0, type 0: the game would read what an earlier skeleton left
+    there), None (EX_HAIR_TYPE_NONE: every chain type 0, no collision) or
+    "auto" (GetHairTypeSelection picks per chain); ``table`` a ``_COL`` key;
+    ``sizes`` the skirt collision's (size, back size, side size, foot
+    radius)."""
     if not name:
-        return None, None
+        return None, None, None
     c = lambda k: name[k] if k < len(name) else "\0"
     last = ""
     for ch in name:                       # GetLastWord: up to a non-ASCII byte
@@ -980,7 +1001,14 @@ def exm_preset(name: str):
             fl[k], kd[k] = flags, kind
 
     col = None
-    sk = lambda idx, kind=16: put(idx, _SKIRT, kind)
+    sizes = [_SKIRT_SIZES]
+
+    def sk(flags, kind=16, size=1.0, back=None, side=1.0, foot=0.05):
+        """Skirt chains 0.. with these flags, and the skirt sizes (the back
+        size is the size unless given)."""
+        for k, f in enumerate(flags):
+            fl[k], kd[k] = f, kind
+        sizes[0] = (size, size if back is None else back, side, foot)
     a, b = c(0), c(1)
     if a == "A":
         if b == "L":
@@ -996,19 +1024,20 @@ def exm_preset(name: str):
                 put([0, 1, 2, 6, 7], 0, 10); put([3, 4, 5], 0, 1)
         elif b == "N":
             if c(4) == "W":
-                sk([0, 1])
+                sk([_S0, _S180], size=1.1)
             elif c(4) == "D":
                 col = "human"
-                sk(range(4)); put([4, 5], 0, 7); put([6], 0, 8)
+                sk([_S45 | _HEM_B, _S315 | _HEM_B, _S135 | _HEM_A, _S225 | _HEM_A], size=1.1)
+                put([4, 5], 0, 7); put([6], 0, 8)
         elif b == "B":
             col = "abel"
-            sk(range(4)); put([4], _ALT, 4); put([5, 6], 0, 8)
+            sk(_CORNERS); put([4], _ALT, 4); put([5, 6], 0, 8)
         elif b == "S":
-            sk(range(4))
+            sk(_CORNERS, back=0.8)
     elif a == "B":
         if b == "R":
             if last == "D":
-                sk([0])
+                sk([_S180 | _HEM_A], size=1.3, back=1.0)
             else:
                 col = "shelley"
                 kd[0] = 4
@@ -1018,9 +1047,10 @@ def exm_preset(name: str):
             put([0], _ALT, 4)
         elif b == "O":
             if c(5) == "2":
-                sk(range(5), 13)
+                sk([f | _SPLIT_A for f in (_S90, _S270, _S0, _S45, _S315)], 13,
+                   size=1.4, back=1.0)
             elif c(5) == "3":
-                return _AUTO, None
+                return _AUTO, None, None
     elif a == "C":
         if b == "H":
             col = "chaos"
@@ -1035,39 +1065,43 @@ def exm_preset(name: str):
             else:
                 put(range(5), 0, 7)
         elif b == "L":
-            sk([0, 1])
+            sk([_S0, _S180], size=1.1, foot=0.07)
     elif a == "E":
         col = "elly"
-        sk(range(4)); put([4], _ALT, 2); put([5, 6], 0, 5); put([7, 8], 0, 4)
+        sk(_CORNERS_A, size=1.1, foot=0.07); put([4], _ALT, 2); put([5, 6], 0, 5); put([7, 8], 0, 4)
     elif a == "F":
         if b == "R":
             col = "human"
             put([0, 1], 0, 5)
         elif b == "E":
-            sk(range(4)); put([4, 5, 6], 0, 7)
+            sk(_CORNERS_A, size=1.4, back=1.1); put([4, 5, 6], 0, 7)
     elif a == "G":
         if b == "A":
             col = "gaignun"
             put([0, 2], _KIND6, 7); put([1], _KIND6, 5); put([3, 4], 0, 7); put([5], 0, 8)
         elif b == "I":
-            sk(range(4))
+            sk([_S45 | _HEM_B, _S315 | _HEM_B, _S135 | _HEM_A, _S225 | _HEM_A],
+               size=1.4, back=1.0)
     elif a == "H":
         if b == "A":
             put([0, 1], 0, 8)
         elif b == "E":
             col = "helmer"
-            sk(range(6)); put([6], 0x1000 | _KIND6, 18); put([7], 0x2000 | _KIND7, 18)
+            sk(_CORNERS_A + [_S90, _S270], size=1.7, back=1.1, foot=0.1)
+            put([6], _A90 | _KIND6, 18); put([7], _A270 | _KIND7, 18)
         elif b == "Y":
             col = "hyaku"
             put([0, 1, 4, 5], 0, 4); put([2, 3], 0, 7)
     elif a == "I":
-        sk(range(4))
+        sk([_S45 | _HEM_B, _S315 | _HEM_B, _S135 | _HEM_A, _S225 | _HEM_A],
+           size=1.4, back=0.8)
     elif a == "J":
         if b == "R":
             if c(2) == "1":
                 put([0], 0, 11)
             else:
-                sk(range(5), 13); put([5], 0, 11)
+                sk([_S0, _S90, _S270, _S45 | _COAT, _S315 | _COAT], 13, size=1.4, back=1.0)
+                put([5], 0, 11)
         elif b == "O":
             col = "kebinh"
             put(range(4), 0, 7)
@@ -1079,7 +1113,7 @@ def exm_preset(name: str):
             elif last != "2":
                 put([0], _ALT, 3); put([1, 2], 0, 5); put([3, 4], _KIND5, 6); put([5], 0, 8)
             else:
-                return _AUTO, None
+                return _AUTO, None, None
         elif b == "E":
             if last == "H":
                 col = "kebinh"
@@ -1087,7 +1121,9 @@ def exm_preset(name: str):
             else:
                 col = "kebin"
                 if last == "N":
-                    sk(range(5), 13); put([5, 6], 0, 7)
+                    sk([_S0, _S90 | _LONG, _S270 | _LONG, _S45 | _LONG, _S315 | _LONG], 13,
+                       size=2.0, back=0.4, side=0.6)
+                    put([5, 6], 0, 7)
                 else:
                     put([0, 1], 0, 7)
     elif a == "L":
@@ -1100,13 +1136,13 @@ def exm_preset(name: str):
                     col = "momo"
                     put(range(5), 0, 5); put([5, 6, 7], 0, 10); put([8, 9], 0, 2); put([10], 0, 8)
                 else:
-                    sk([0, 1])
+                    sk([_S0, _S180], size=1.1, back=1.0, foot=0.06)
             elif last == "1":
                 col = "momo1"
                 put([0, 1], 0, 14); put([2, 7], 0, 8); put([3, 4], 0, 5); put([5, 6], 0, 4)
             elif last == "2":
                 col = "momo"
-                sk(range(4)); put(range(4, 8), 0, 17); put([8, 13], 0, 8); put([9, 10], 0, 5)
+                sk(_CORNERS_A, size=1.3, back=0.8); put(range(4, 8), 0, 17); put([8, 13], 0, 8); put([9, 10], 0, 5)
                 put([11, 12], 0, 4)
             elif last == "4":
                 col = "momo4"
@@ -1122,15 +1158,15 @@ def exm_preset(name: str):
             put([0, 2], 0, 4); put([1], _ALT, 2); put([3, 4, 5], 0, 7)
     elif a == "O":
         if b == "B":
-            sk(range(4))
+            sk(_CORNERS, size=1.3, back=1.0)
         elif b == "F":
             col = "off"
             put([0], _ALT, 4)
     elif a == "P":
-        return _AUTO, None
+        return _AUTO, None, None
     elif a == "R":
         col = "robot"
-        sk(range(4)); put([4], _ALT, 14)
+        sk([_S0, _S0, _S180, _S180], size=1.3, back=1.0, foot=0.15); put([4], _ALT, 14)
     elif a == "S":
         if b == "H":
             if c(2) == "I":
@@ -1139,7 +1175,7 @@ def exm_preset(name: str):
                     if last == "H":
                         if c(6) == "C":
                             col = "shionch"
-                            sk(range(4), 15); put([4], _ALT, 2); put([5, 6, 7], 0, 7)
+                            sk(_CORNERS_A, 15, size=1.3, back=1.0); put([4], _ALT, 2); put([5, 6, 7], 0, 7)
                         else:
                             put([0], _ALT, 2); put([8], _KIND6, 4); put([1, 2, 7], 0, 8)
                             put([3], 0, 4); put([4, 5, 6], 0, 5)
@@ -1159,9 +1195,9 @@ def exm_preset(name: str):
                         col = "mam"
                         put([0], _KIND6, 7); put([1], _ALT, 2); put([2, 3, 4], 0, 8)
             elif c(2) == "E":
-                return _AUTO, None
+                return _AUTO, None, None
         elif b == "E":
-            sk(range(4)); put([4, 5], 0, 5)
+            sk(_CORNERS, size=1.4, back=1.0); put([4, 5], 0, 5)
         elif b == "T":
             col = "human"
             put([0, 1], 0, 5); put([2], 0, 7); put([3, 4], 0, 8)
@@ -1172,41 +1208,44 @@ def exm_preset(name: str):
         col = "momo"
         put([0, 1], 0, 4)
     elif a == "V":
-        sk(range(5), 13)
+        sk([_S0, _S90 | _LONG, _S270 | _LONG, _S45 | _LONG, _S315 | _LONG], 13,
+           size=2.0, back=0.4, side=0.6)
     elif a == "W":
-        sk(range(4))
+        sk(_CORNERS_A, size=1.5, back=0.8)
     elif a == "Y":
-        sk(range(4)); put([4, 5], 0, 7)
+        sk(_CORNERS); put([4, 5], 0, 7)
     elif a == "Z":
         put([0, 1], 0, 5)
     if 0 not in kd:                       # htypebuf[0].kind still EX_HAIR_TYPE_NONE
-        return None, None
-    return {k: (fl.get(k, 0), kd.get(k, 0)) for k in set(fl) | set(kd)}, col
+        return None, None, None
+    return ({k: (fl.get(k, 0), kd.get(k, 0)) for k in set(fl) | set(kd)}, col,
+            tuple(_f32(v) for v in sizes[0]))
 
 
 def _exm_auto(name: str, root: int):
-    """GetHairTypeSelection: (flags, kind, table) from the name's first
-    letter and the chain root's block number (hair_type_code shares its
-    halfword with saved_index)."""
+    """GetHairTypeSelection: (flags, kind, table, skirt sizes) from the
+    name's first letter and the chain root's block number (hair_type_code
+    shares its halfword with saved_index)."""
     a = name[0] if name else ""
     if a == "P":
-        t = {74: (_SKIRT, 16), 79: (_SKIRT, 16), 84: (0, 8), 87: (0, 5), 91: (0, 5),
+        t = {74: (_S0, 16), 79: (_S180, 16), 84: (0, 8), 87: (0, 5), 91: (0, 5),
              95: (0, 7), 100: (0, 7)}
-        return t.get(root, (0, 0)) + ("human",)
+        return t.get(root, (0, 0)) + ("human", (_f32(0.8), 1.0, 1.0, _f32(0.05)))
     if a == "S":
-        t = {74: (_SKIRT, 16), 77: (_SKIRT, 16), 80: (_ALT, 2), 86: (0, 5), 90: (0, 5),
+        t = {74: (_S0, 16), 77: (_S180, 16), 80: (_ALT, 2), 86: (0, 5), 90: (0, 5),
              94: (0, 4), 101: (0, 4)}
-        return t.get(root, (0, 0)) + ("shelley",)
+        return t.get(root, (0, 0)) + ("shelley", (1.0, 1.0, 1.0, _f32(0.05)))
     if a == "B":
-        t = {113: (_SKIRT, 16), 117: (_SKIRT, 16), 121: (_SKIRT, 16), 125: (_SKIRT, 16),
-             128: (_SKIRT, 16), 131: (0, 4), 135: (0, 4), 139: (0, 4), 150: (0, 4),
-             155: (0, 4), 142: (0, 5), 146: (0, 5)}
-        return t.get(root, (0, 0)) + (None,)
+        t = {113: (_S45 | _SPLIT_B, 16), 117: (_S0 | _SPLIT_B, 16),
+             121: (_S315 | _SPLIT_B, 16), 125: (_S135 | _SPLIT_B | _HEM_A, 16),
+             128: (_S225 | _SPLIT_B | _HEM_A, 16), 131: (0, 4), 135: (0, 4), 139: (0, 4),
+             150: (0, 4), 155: (0, 4), 142: (0, 5), 146: (0, 5)}
+        return t.get(root, (0, 0)) + (None, (1.0, 1.0, 1.0, _f32(0.15)))
     if a == "K":
         t = {74: (0, 12), 77: (0, 12), 80: (0, 12), 83: (0, 12), 86: (_ALT, 3),
              92: (0, 5), 95: (0, 5), 98: (_KIND5, 4), 103: (_KIND5, 4), 108: (0, 8)}
-        return t.get(root, (0, 0)) + ("kosmos",)
-    return 0, 0, None
+        return t.get(root, (0, 0)) + ("kosmos", None)
+    return 0, 0, None, None
 
 
 def _exm_collide(world, p, scale, prims, flags):
@@ -1273,13 +1312,195 @@ def _exm_collide(world, p, scale, prims, flags):
     return (cx, cy, cz), count
 
 
+# CheckSkirtCollisionSub's sections, by rootBorn: the blocks whose positions
+# give (first start, second start, first end, second end): the two thighs
+# (16/26 down to the knees 17/27 or the shins 18/28, 20/30), the long-coat
+# pair (54/66 down to 56/68 or 60/72) and the split skirt's 16/29 pair
+_SKIRT_SECTIONS = {0: (16, 26, 17, 27), 1: (16, 26, 20, 30), 2: (54, 66, 56, 68),
+                   3: (54, 66, 60, 72), 4: (16, 29, 17, 30), 5: (16, 29, 20, 33),
+                   6: (16, 26, 18, 28), 7: (16, 26, 20, 30)}
+_SKIRT_ROOT, _SKIRT_HIP = 11, 13          # EX_JOINT_ROOT (x, z), EX_JOINT_HIP (y)
+_Q1, _Q2, _Q3, _Q5, _Q6, _Q7 = (_f32(math.pi * k / 4) for k in (1, 2, 3, 5, 6, 7))
+_PI = _f32(math.pi)
+
+
+def _skirt_profile(flags):
+    """The profile angle and the (side, depth) responses the
+    EX_SKIRT_FLAG_ANGLE_* bits pick."""
+    h = d = _f32(0.2)
+    if flags & _A180:
+        if flags & _A90:
+            return _Q3, _f32(0.7), _f32(0.7)
+        if flags & _A270:
+            return _Q5, _f32(0.7), _f32(0.7)
+        return _PI, 1.0, d
+    if flags & _A0:
+        if flags & _A90:
+            return _Q1, _f32(0.7), _f32(0.7)
+        if flags & _A270:
+            return _Q7, _f32(0.7), _f32(0.7)
+        return 0.0, 1.0, d
+    if flags & _A90:
+        return _Q2, h, 1.0
+    return _Q6, h, 1.0
+
+
+def _skirt_sub(world, p, ref, flags, sizes, born):
+    """CheckSkirtCollisionSub for one section (``born`` is rootBorn): pushes
+    ``p`` (a list, world space) out of the cone the two legs sweep, seen
+    along the character's facing, and with a hem lift keeps it above the
+    leg ends.  The game moves the section joints into root-relative space
+    and back in place; here they are copies."""
+    size, size_b, size_s, foot = sizes
+    ang, hr, dr = _skirt_profile(flags)
+    reverse = bool(flags & _SPLIT_B)
+    sec = _SKIRT_SECTIONS[born]
+    need = (_SKIRT_ROOT, _SKIRT_HIP, 14 if reverse else 36) + sec
+    if max(need) >= len(world) or any(world[j] is None for j in need):
+        return
+    basis = world[14 if reverse else 36]
+    ax = _translate((basis[0], basis[1], (0.0, 0.0, 0.0)), (0.0, 0.0, 1.0))[2]
+    oc, os_ = ax[0], -ax[2]
+    hip = world[_SKIRT_HIP][2]
+    if reverse:
+        a = -_Q2 - ang
+        t = _translate(world[14], (0.0, math.cos(a), math.sin(a)))[2]
+        rx, ds = t[0] - hip[0], t[2] - hip[2]
+        rz = oc * ds + os_ * rx
+        rx = oc * rx - os_ * ds
+    else:
+        t = _translate(world[_SKIRT_HIP], (0.0, math.cos(ang), math.sin(ang)))[2]
+        ds, rx = t[0] - hip[0], t[2] - hip[2]
+        rz = oc * ds - os_ * rx
+        rx = oc * rx + os_ * ds
+    root = world[_SKIRT_ROOT][2]
+    ox, oz = root[0], root[2]
+    fs, ss, fe, se = ([world[j][2][0] - ox, world[j][2][1], world[j][2][2] - oz] for j in sec)
+    p[0] -= ox
+    p[2] -= oz
+
+    def edge(start, end):
+        seg = math.dist(end, start)
+        if seg == 0.0:
+            return None
+        lm = math.dist(p, start) / seg
+        x = (end[0] - start[0]) * lm + start[0]
+        z = (end[2] - start[2]) * lm + start[2]
+        scale = size
+        if ang < _Q2 or _Q6 < ang:
+            scale *= size_b
+        if _Q1 < ang < _Q3 or _Q5 < ang < _Q7:
+            scale *= size_s
+        if lm > 1.0:
+            scale /= lm
+        x, z = x * scale, z * scale
+        return oc * x - os_ * z, oc * z + os_ * x
+
+    first, second = edge(fs, fe), edge(ss, se)
+    if first is not None and second is not None:
+        fx, sx = max(first[0], second[0]), min(first[0], second[0])
+        fz, sz = max(first[1], second[1]), min(first[1], second[1])
+        fx += foot * 0.5
+        sx -= foot * 0.5
+        fz += foot
+        sz -= foot
+        lx = oc * p[0] - os_ * p[2]
+        lz = oc * p[2] + os_ * p[0]
+        if rz > 0.0:
+            if lx < fx:
+                lx += (fx - lx) * rz * dr
+        elif rz < 0.0:
+            if sx < lx:
+                lx += (lx - sx) * rz * dr
+        if rx > 0.0:
+            if lz < fz:
+                lz += (fz - lz) * rx * hr
+        elif rx < 0.0:
+            if sz < lz:
+                lz += (lz - sz) * rx * hr
+        p[0] = oc * lx + os_ * lz
+        p[2] = oc * lz - os_ * lx
+
+    side = 0                                  # which ends the hem lift tests
+    if flags & _HEM_A and born == 0:
+        side = 1                              # the front: ends ahead of the hip
+    elif flags & _HEM_A and born == 6:
+        side = 2                              # every end, no reference test
+    elif flags & _HEM_B and born == 1:
+        side = -1                             # the back
+    if side:
+        hy = hip[1]
+        p[1] -= hy
+        rr = math.hypot(ref[0] - ox, ref[2] - oz)
+        for e in (fe, se):
+            ey = e[1] - hy
+            if side != 2:
+                along = oc * e[2] + os_ * e[0]
+                if (along < 0.0) if side == 1 else (along > 0.0):
+                    continue
+            reach = math.hypot(e[0], e[2])
+            if side != 2 and not rr < reach:
+                continue
+            dist = math.hypot(p[0], p[2])
+            k = reach / dist if dist != 0.0 else 1.0
+            if k != 0.0 and p[1] * k < ey + foot + foot:
+                p[1] = (ey + foot + foot) / k
+        p[1] += hy
+    p[0] += ox
+    p[2] += oz
+
+
+def _skirt_collide(world, p, ref, flags, sizes):
+    """EXM_CheckSkirtCollision: the sections ``flags`` select, in order."""
+    if flags & _SPLIT_A:
+        borns = (4, 5)
+    elif flags & _SPLIT_B:
+        borns = (6, 7)
+    else:
+        borns = (0, 1, 2, 3) if flags & _LONG else (0, 1)
+    for born in borns:
+        _skirt_sub(world, p, ref, flags, sizes, born)
+
+
+_JR_COAT = tuple(_f32(v) for v in (0.0985, 0.1285, 0.1985))
+
+
+def _coat_pull(width, pos, joint):
+    """AdjustJrCoatWidth: halfway toward the point ``width`` from ``joint``
+    along the joint-to-``pos`` line."""
+    d = (pos[0] - joint[0], pos[1] - joint[1], pos[2] - joint[2])
+    ln = math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) or 1.0
+    w = width / ln
+    return [(joint[a] + d[a] * w) * 0.5 + pos[a] * 0.5 for a in range(3)]
+
+
+def _coat_width(world, p, root, index):
+    """EX_HAIR_FLAG_COAT_WIDTH (Jr.'s coat): ``p`` is pulled to 0.25 from
+    block 74 + index, and the matching joints of the coat's other chains
+    toward ``p``.  The game picks those by the chain's root (91: block
+    index + 80, 96: index + 86, any other: block index, as it does)."""
+    j = 74 + index
+    if j < len(world) and world[j] is not None:
+        p[:] = _coat_pull(_f32(0.25), p, world[j][2])
+    base = {91: index + 80, 96: index + 86}.get(root, 0)
+    if index < 4:
+        pulls = [(base, _JR_COAT[index - 1])]
+    else:
+        pulls = [(base, _JR_COAT[2]), (base + 1, _JR_COAT[2])]
+    for c, width in pulls:
+        if c < len(world) and world[c] is not None:
+            m = world[c]
+            world[c] = (m[0], m[1], tuple(_coat_pull(width, m[2], p)))
+
+
 def exm_chains(rig: Rig) -> list:
     """The chains EXM_CalcExMotion solves, in order: (root, [queued blocks],
-    flags, kind, table key).  Skirt chains are left out (they keep their
-    rest pose here) but still use up their type."""
+    flags, kind, collision).  ``collision`` is a ``_COL`` key, or for a skirt
+    chain (EX_HAIR_FLAG_SKIRT) the skirt sizes; None runs the chain with no
+    collision at all."""
     end = min(rig.primary + rig.secondary, len(rig.types))
     start = rig.hair if rig.hair >= 0 else rig.primary
-    types, col = exm_preset(rig.name)
+    types, col, sizes = exm_preset(rig.name)
     out = []
     ibuf = 0
     i = start
@@ -1297,13 +1518,14 @@ def exm_chains(rig: Rig) -> list:
         if types is None:
             flags, kind, table = 0, 0, None
         elif types == _AUTO:
-            flags, kind, table = _exm_auto(rig.name, root)
+            flags, kind, table, auto_sizes = _exm_auto(rig.name, root)
+            if flags & _SKIRT:
+                table = auto_sizes
         else:
             flags, kind = types.get(ibuf, (0, 0))
-            table = col
+            table = sizes if flags & _SKIRT else col
             ibuf += 1
-        if not flags & _SKIRT:
-            out.append((root, queued, flags, kind, table))
+        out.append((root, queued, flags, kind, table))
         i = j + 1
     return out
 
@@ -1317,11 +1539,13 @@ def exm_step(rig: Rig, world: list, previous: Optional[dict], chains=None) -> di
         chains = exm_chains(rig)
     previous = previous or {}
     now: dict = {}
+    solved: list = []
     for root, queued, flags, kind, table in chains:
         if world[root] is None:
             continue
         gravity, lresp, resp, cresp = _HAIRPARA[kind]
-        prims = _COL.get(table) if table else None
+        skirt = table if flags & _SKIRT else None
+        prims = _COL.get(table) if table and skirt is None else None
         first = queued[0]
         world[first] = _rotate(_translate(world[root], rig.translations[first]),
                                _rzyx(rig.rotations[first]))
@@ -1336,6 +1560,8 @@ def exm_step(rig: Rig, world: list, previous: Optional[dict], chains=None) -> di
             r = cresp / ((k - 1) + cresp)
             for a in range(3):
                 p[a] += (tgt[a] - p[a]) * resp[a] * r
+            if flags & _COAT:
+                _coat_width(world, p, root, k)
             if p[1] < 0.07:                      # the floor, 0.07 above the ground
                 p[1] = 0.07
             pt = parent[2]
@@ -1347,14 +1573,16 @@ def exm_step(rig: Rig, world: list, previous: Optional[dict], chains=None) -> di
                     p[a] += w * d[a] * (tr[0] * cur[1][a] - dist)
             else:
                 p[1] -= gravity
-            if prims:
+            if skirt is not None:
+                _skirt_collide(world, p, parent[2], flags, skirt)
+            elif prims:
                 corr, hits = _exm_collide(world, p, cur[1][0], prims, flags)
                 if hits:
                     p[0] = (p[0] - pp[0]) * 0.9 + corr[0] + pp[0]
                     p[1] += corr[1]
                     p[2] = (p[2] - pp[2]) * 0.9 + corr[2] + pp[2]
             world[blk] = (cur[0], cur[1], tuple(p))
-            now[blk] = tuple(p)
+            solved.append(blk)
         bend = 0.0
         if flags & _ALT and len(world) > 48 and world[39] is not None \
                 and world[48] is not None:
@@ -1379,6 +1607,10 @@ def exm_step(rig: Rig, world: list, previous: Optional[dict], chains=None) -> di
             if flags & _ALT:
                 r = _mm(r, _rx(k * bend))
             world[blk] = (r, m[1], m[2])
+    # read back after every chain: the coat width moves joints of chains
+    # already solved this tick, and the game's previous matrices see that
+    for blk in solved:
+        now[blk] = world[blk][2]
     return now
 
 
@@ -2227,10 +2459,10 @@ def self_test() -> list[tuple[str, bool, str]]:
     # chain held out sideways from its root sags under type 5's gravity (the
     # pull toward the rigid chain is 0.9 * 0.7 / 1.7 a tick at the tip: about
     # 0.014 m), keeps its link length, and gets a track of its own
-    kt, kc = exm_preset("KOSMOS")
+    kt, kc, _ks = exm_preset("KOSMOS")
     check("EXM_PresetHair: KOSMOS chain types", kc == "kosmos" and kt == {
         0: (_ALT, 3), 1: (0, 5), 2: (0, 5), 3: (_KIND5, 6), 4: (_KIND5, 6), 5: (0, 8)}, repr(kt))
-    check("EXM_PresetHair: an unknown name is EX_HAIR_TYPE_NONE", exm_preset("QQ") == (None, None))
+    check("EXM_PresetHair: an unknown name is EX_HAIR_TYPE_NONE", exm_preset("QQ") == (None, None, None))
     xj = parse_rig(_mk_jnt(b"ZZ", [(1, 0, (0, 0, 0), (0, 0, 0), 0.0),
                                    (3, 0, (0, 2.0, 0), (0, 0, 0), 0.0),
                                    (2, 1, (0, 0, 0), (0, 0, 0), 0.0),
@@ -2244,6 +2476,36 @@ def self_test() -> list[tuple[str, bool, str]]:
           and 2.0 - 0.02 < xw[4][2][1] < 2.0 - 0.01 and abs(link - 0.5) < 1e-3,
           repr((xw[3][2], xw[4][2], link)))
     check("EXM: simulated links are baked", 3 in bake(xj, xc)["tracks"])
+
+    # EXM_CheckSkirtCollision, EX_HAIR_SKIRT_0 (depth response 0.2): the
+    # hip's y axis and block 36's z axis face +X, both thighs hang straight
+    # down at x = 0.1, the foot radius is 0.05, so the front edge is at 0.125.
+    # A point at x = 0 between the legs moves 0.2 of the way there in section
+    # 0 (to 0.025), then again in section 1 (whose shins reach y = 0: to
+    # 0.045); a point already in front of the legs stays where it is
+    sw = [None] * 37
+    hold = lambda r, t: (r, (1.0, 1.0, 1.0), t)
+    for j in (11, 14):
+        sw[j] = hold(_I3, (0.0, 0.0, 0.0))
+    sw[13] = hold((0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0), (0.0, 1.0, 0.0))
+    sw[36] = hold((0.0, 0.0, 1.0, 0.0, 1.0, 0.0, -1.0, 0.0, 0.0), (0.0, 1.2, 0.0))
+    for z, top, knee, shin, low in ((0.1, 16, 17, 18, 20), (-0.1, 26, 27, 28, 30)):
+        sw[top] = hold(_I3, (0.1, 1.0, z))
+        sw[knee] = sw[shin] = hold(_I3, (0.1, 0.5, z))
+        sw[low] = hold(_I3, (0.1, 0.0, z))
+    sizes = (1.0, 1.0, 1.0, _f32(0.05))
+    inside, outside = [0.0, 0.75, 0.0], [0.3, 0.75, 0.0]
+    _skirt_collide(sw, inside, (0.0, 1.0, 0.0), _S0, sizes)
+    _skirt_collide(sw, outside, (0.0, 1.0, 0.0), _S0, sizes)
+    check("EXM skirt: a point between the legs is pushed out in front of them",
+          abs(inside[0] - 0.045) < 1e-6 and inside[1:] == [0.75, 0.0]
+          and outside == [0.3, 0.75, 0.0], repr((inside, outside)))
+    check("EXM coat width: halfway to 0.25 from the joint",
+          _coat_pull(0.25, (1.0, 0.0, 0.0), (0.0, 0.0, 0.0)) == [0.625, 0.0, 0.0])
+    jt, _jc, js = exm_preset("JR")
+    check("EXM_PresetHair: Jr.'s coat keeps its skirt flags and sizes",
+          jt[3] == (_S45 | _COAT, 13) and jt[1] == (_S90, 13) and js == (
+              _f32(1.4), 1.0, 1.0, _f32(0.05)), repr((jt, js)))
 
     # a parent scaled unevenly (2, 1, 1) and a child turned 90 degrees about Z
     # under it: the game's child basis is Rz * diag(2, 1, 1), which no TRS
@@ -2366,9 +2628,10 @@ def selftest(iso: Optional[str] = None) -> int:
               "%d of them unscaled and in reach, worst miss over those %.1e m"
               % ("ok" if ok else "FAIL", pack_path, jnt_path, len(fit), len(clips), frames,
                  solved, measured, miss))
-    ok, detail = _check_run_hair(iso)
-    bad += not ok
-    print("%-4s %s" % ("ok" if ok else "FAIL", detail))
+    for check in (_check_run_hair, _check_coat):
+        ok, detail = check(iso)
+        bad += not ok
+        print("%-4s %s" % ("ok" if ok else "FAIL", detail))
     return 1 if bad else 0
 
 
@@ -2427,6 +2690,52 @@ def _check_run_hair(iso) -> tuple[bool, str]:
                 % (pack_path, slot, jnt_path, len(frames), len(chains),
                    "every block finite" if finite else "a block NOT finite",
                    -behind, rigid, stretch))
+
+
+# Jr.'s field clip 2 and his coat: five skirt chains from block 74 (types 13,
+# two of them with EX_HAIR_FLAG_COAT_WIDTH), against his legs (blocks 16 to
+# 18 and 26 to 28)
+COAT_CLIP = ("motion\\jr_cf.fpk", 2, "char\\pc\\jr.jnt")
+
+
+def _seg_dist(p, a, b):
+    ab = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+    ln = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2]
+    t = 0.0 if ln == 0.0 else max(0.0, min(1.0, sum(ab[i] * (p[i] - a[i]) for i in range(3)) / ln))
+    return math.dist(p, (a[0] + ab[0] * t, a[1] + ab[1] * t, a[2] + ab[2] * t))
+
+
+def _check_coat(iso) -> tuple[bool, str]:
+    """``simulate`` with the skirt collision on disc data: every coat block
+    finite at every frame, and the coat's closest approach to either leg at
+    least 4 cm (held at its rest pose it comes within 2.5 cm)."""
+    from repack import read_entry
+    pack_path, slot, jnt_path = COAT_CLIP
+    rig = parse_rig(read_entry(iso, 0, jnt_path))
+    clip = next((c for sl, c in read_pack(read_entry(iso, 0, pack_path), strict=True)
+                 if slot in sl), None)
+    if clip is None or not fits(rig, clip):
+        return False, "%s#%02d does not line up with %s" % (pack_path, slot, jnt_path)
+    frames = list(range(clip.first_frame, clip.last_frame + 1))
+    chains = exm_chains(rig)
+    coat = [b for ch in chains if ch[2] & _SKIRT for b in ch[1][1:]]
+    if len(coat) < 10 or not any(ch[2] & _COAT for ch in chains):
+        return False, "%s has no coat chains" % jnt_path
+
+    def closest(worlds):
+        return min(_seg_dist(w[b][2], w[a][2], w[e][2])
+                   for w in worlds for b in coat for a, e in ((16, 18), (26, 28)))
+
+    worlds = simulate(rig, clip, frames, chains=chains)
+    finite = all(all(math.isfinite(x) for x in w[b][2]) for w in worlds for b in coat)
+    near = closest(worlds) if finite else 0.0
+    rest = closest(simulate(rig, clip, frames,
+                            chains=[ch for ch in chains if not ch[2] & _SKIRT]))
+    ok = finite and near >= 0.04 and rest < 0.025
+    return ok, ("%s#%02d on %s: %d frames, %d coat blocks, %s, closest to a leg %.3f m "
+                "(%.3f m held at rest)"
+                % (pack_path, slot, jnt_path, len(frames), len(coat),
+                   "every block finite" if finite else "a block NOT finite", near, rest))
 
 
 def main(argv=None) -> int:
