@@ -33,6 +33,10 @@ shows Jr. running with his coat (`docs/images/front/motion-jr-run.gif`),
 and [BLENDER.md](BLENDER.md#a-moving-model-step-by-step) now has a
 step-by-step guide from the disc to a character playing its clips in
 Blender, checked against what Blender 5.4's importer does with the files.
+The motion GIFs are re-rendered with Blender's Dithered transparency: with
+the importer's default (Blended), Blender drew the inner layers of
+KOS-MOS's hair over the outer ones, which looked like holes in her hair.
+The mesh was whole; the guide now says how to switch.
 
 **Legs and other pose fixes from the decomp.** Body blocks are now read
 and built the way `JNT_getVal` and `JNT_constructMatrix` do it, not

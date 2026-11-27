@@ -127,7 +127,26 @@ after importing changes the speed.
 
 **4. Import.** File ▸ Import ▸ glTF 2.0, pick the `.glb`, leave the
 options as they are. Press `Z` and choose **Material Preview** to see the
-textures. In the Outliner you will find:
+textures.
+
+**Make the hair draw right.** The see-through parts (hair, eyelashes) come
+in with Blender's *Blended* render method, which sorts see-through
+surfaces per object, not per triangle. KOS-MOS's hair is several layers in
+one object, so its inner layers get drawn over its outer ones and the hair
+looks as if it has holes in it. The mesh is whole; switch the materials to
+*Dithered*, which needs no sorting: select a hair part, Material
+properties ▸ Settings ▸ Render Method ▸ **Dithered**. For every material at
+once, paste this into the Python Console (Scripting workspace) and press
+Enter:
+
+```python
+for m in bpy.data.materials: m.surface_render_method = 'DITHERED'
+```
+
+That is for Blender 4.2 and newer; in older versions set Blend Mode to
+Alpha Hashed. Cycles draws the hair right either way.
+
+In the Outliner you will find:
 
 * `skeleton`, the armature: the game's joints as bones (`j45`, `j46`, …,
   with `node`, `offset` and `end` nodes between them);
@@ -169,6 +188,8 @@ head bone and follows it; eyes and mouths do not animate.
 
 * *Parts or the whole model stand still:* the armature has no action. Pick
   one in the Action Editor (step 6).
+* *Holes or dark notches in the hair:* the hair is still on the Blended
+  render method. Switch it to Dithered (step 4).
 * *Two copies of the same character imported:* Blender adds `.001` to the
   second file's action names; pick the action ending in `.001` for it.
 * *The clip plays too fast or too slow:* the frame rate was changed after

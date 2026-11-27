@@ -163,6 +163,15 @@ try:
     sc.eevee.taa_render_samples = 16
 except AttributeError:
     pass
+# The importer gives glTF BLEND materials (hair, lashes) the Blended render
+# method, which EEVEE sorts per object, not per triangle: KOS-MOS's layered
+# hair then draws inner layers over outer ones and shows dark notches that
+# look like holes.  Dithered needs no sorting (docs/BLENDER.md, step 4).
+for m in bpy.data.materials:
+    if hasattr(m, "surface_render_method"):
+        m.surface_render_method = "DITHERED"
+    elif hasattr(m, "blend_method") and m.blend_method == "BLEND":
+        m.blend_method = "HASHED"           # Blender before 4.2
 sc.view_settings.view_transform = "Standard"
 sc.render.film_transparent = True
 sc.render.resolution_x, sc.render.resolution_y = W, H
