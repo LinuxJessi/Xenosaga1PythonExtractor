@@ -13,12 +13,17 @@ The kit ships no game data. You need your own copy of the disc.
 <tr>
 <td align="center"><img src="docs/images/front/motion-kosmos-shion-walk.gif" height="300" alt="KOS-MOS and Shion walking: the kit's .glb files, each playing clip 1 of the character's field motion pack, rendered in Blender"></td>
 <td align="center"><img src="docs/images/front/motion-kosmos-run.gif" height="300" alt="KOS-MOS running: kosmos.glb playing clip 3 of motion/kosmos_cf.fpk, rendered in Blender"></td>
+<td align="center"><img src="docs/images/front/motion-jr-run.gif" height="300" alt="Jr. running, his long coat swinging out behind his legs: jr.glb playing clip 3 of motion/jr_cf.fpk, rendered in Blender"></td>
 </tr>
 <tr>
 <td align="center"><sub>KOS-MOS and Shion, exported with their motion<br>and rendered in Blender (clip 1 of each field pack)</sub></td>
 <td align="center"><sub>KOS-MOS, clip 3 of the same pack</sub></td>
+<td align="center"><sub>Jr., clip 3 of his pack: the coat<br>is simulated the way the game does it</sub></td>
 </tr>
 </table>
+
+**Get them into Blender yourself, bones and motion included:**
+[a step-by-step guide](docs/BLENDER.md#a-moving-model-step-by-step).
 
 ![KOS-MOS, Cherenkov and Albedo imported into Blender from the kit's .glb files](docs/images/blender-models.png)
 
@@ -45,9 +50,11 @@ font, with the letters it never had taken from a font on your computer
 * **The models move.** The motion packs are decoded: all 4,147 clips on
   the disc read to their last byte, and a clip made for a model's
   skeleton becomes a Blender action on its armature, legs solved toward
-  their foot targets the way the game solves them, hair and cloth run
-  through a port of the game's own simulation. `browse` attaches them,
-  `model` writes one character with the clips you choose.
+  their foot targets the way the game solves them, hair, skirts and coats
+  run through a port of the game's own simulation. `browse` attaches them,
+  `model` writes one character with the clips you choose, and
+  [docs/BLENDER.md](docs/BLENDER.md#a-moving-model-step-by-step) walks
+  you through opening them in Blender.
   [Animation](#animation), [docs/MOTION.md](docs/MOTION.md).
 
 ## What's new (October 2026)
@@ -107,8 +114,8 @@ font, with the letters it never had taken from a font on your computer
   FLAC, with MIDI and SoundFont files alongside, at the right tempo.
   The story of how: [docs/MUSIC.md](docs/MUSIC.md).
 
-Still on the list: comparing the motion with the running game, skirts
-and wind in the hair and cloth simulation, and a few map meshes in formats
+Still on the list: comparing the motion with the running game, wind
+in the hair and cloth simulation, and a few map meshes in formats
 the model parser skips. The full change log is in [docs/UPDATES.md](docs/UPDATES.md).
 
 ## Running it
@@ -234,7 +241,7 @@ python cli.py motion --dump out/dump --sweep      # read every clip on the disc
 
 At the top of the page KOS-MOS and Shion play clip 1 of their field packs
 (`motion/kosmos_cf#01`, `motion/shion_cf#01`), a walk-like cycle, and
-KOS-MOS plays clip 3, a run. On the right the camera circles her once
+KOS-MOS plays clip 3, a run; so does Jr., in clip 3 of his own pack. On the right the camera circles her once
 while she plays clip 0, a standing loop. Shion is `shion.lex`, the model her face is merged
 into; its skeleton calls itself `SHION_3` and the clip was made for `SHION`,
 so that pairing was asked for by name and is not one the kit makes by itself.
@@ -246,9 +253,13 @@ of `browse` with 37 actions. The clips have no names on the disc, so
 "walk" and "run" describe what the renders look like. Hair and cloth are
 not in the clips: the game simulates them while it plays, and the kit
 runs them through a port of that simulation (`EXM_CalcExMotion`), so
-KOS-MOS's back hair hangs behind her instead of sinking into her back. Chains the game treats
-as skirts keep their rest pose, and there is no wind. **None of this has
-been compared with the running game.** More in [docs/MOTION.md](docs/MOTION.md).
+KOS-MOS's back hair hangs behind her instead of sinking into her back.
+Skirts, dresses and coats swing clear of the legs through a port of the
+game's skirt collision, so Jr.'s legs no longer pass through his coat.
+There is no wind. **None of this has been compared with the running
+game.** More in [docs/MOTION.md](docs/MOTION.md); opening the models and
+playing the clips in Blender, step by step, in
+[docs/BLENDER.md](docs/BLENDER.md#a-moving-model-step-by-step).
 
 <br clear="right">
 

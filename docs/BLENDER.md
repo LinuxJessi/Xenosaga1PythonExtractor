@@ -74,38 +74,121 @@ own (`kosmos_face.lex`, `kosmos_h_face.lex`). The companions are also
 written on their own, so `kosmos_face.glb` is there if you only want
 the head.
 
-## Playing the motion
+## A moving model, step by step
 
-A model whose skeleton has motion clips on the disc comes with them: one
-action per clip, named after the pack and slot (`motion/kosmos_cf#01`).
-Select the armature, open the Dope Sheet in Action Editor mode (or the
-Animation workspace), pick an action from the list and press Space. Set
-the scene to 30 frames a second (Output properties ▸ Frame Rate) before
-importing: each key then lands on a whole frame. The importer turns the
-file's times into frames at the scene's rate, so at Blender's default of
-24 the clips still play at the right speed, but their keys fall between
-frames. Changing the rate after importing changes the speed. `browse`
-attaches the clips made for each skeleton; for one model with chosen
-clips:
+<img src="images/front/motion-jr-walk.gif" height="300" align="right" alt="Jr. walking in Blender: jr.glb playing clip 1 of motion/jr_cf.fpk, his coat swinging behind his legs">
+
+This is the whole road from your disc to a character walking in Blender,
+for someone who has not used the kit before. Checked with Blender 5.4;
+any recent Blender should do the same, and no add-ons are needed. The
+motion is newer than the v1.3.0 app, so until the next release run the
+kit from a source checkout (`launch.bat`, `launch.command` or `launch.sh`;
+see "Running it" in the [README](../README.md#running-it)).
+
+**1. Extract the disc.** In the app, card 2, **Extract assets**: pick your
+disc image and an output folder. On the command line:
 
 ```sh
-python cli.py model --dump out/dump --path 'char\pc\kosmos.lex' --out kosmos.glb \
-       --motion 'motion\kosmos_cf.fpk#1,3'
+python cli.py extract --iso GAME.iso --out out/
 ```
 
-The legs are baked: the game solves them toward foot targets every frame
-and the action holds the result, one key per frame. The targets
-themselves are not in the action. The hair and cloth bones are baked
-too: the clip does not store them, so the kit runs the game's hair
-simulation and keys where it puts them. The face is a set of small bones under
-the head bone and follows it. Details in [MOTION.md](MOTION.md).
+This writes the game's own files under `out/dump/`. It takes a while
+and is done once.
+
+**2. Write the models, with their motion.** Either all of them or one.
+
+* *All of them:* card 4, **Convert for browsing**, with **Models** ticked
+  (`python cli.py browse --out out/ --kinds models`). Every model lands
+  under `out/browse/models/`, each with every clip made for its skeleton
+  already inside it. The whole pass took 26 minutes on a recent Mac.
+* *One character, with the clips you choose:* card 15, **One model with
+  its motion**. Give it the model's path on the disc and, if you like, a
+  motion pack with the slots you want; leave the pack empty to get every
+  clip made for that skeleton. On the command line:
+
+  ```sh
+  python cli.py model --dump out/dump --path 'char\pc\jr.lex' --out jr.glb \
+         --motion 'motion\jr_cf.fpk#1,3'
+  ```
+
+  The paths use the game's backslashes; keep the quotes. Card 16, **List
+  or check the motion packs** (`python cli.py motion --dump out/dump --pack
+  'motion\jr_cf.fpk'`), shows which slots a pack has and how long each is.
+  The party's field packs are `motion\<name>_cf.fpk` (`kosmos`, `shion`,
+  `jr`, `momo`, `chaos`, `ziggy`). The clips have no names on the disc: in
+  KOS-MOS's and Jr.'s field packs slot 1 looks like a walk and slot 3 like a run, and
+  slot 0 is a standing loop.
+
+**3. Set Blender to 30 frames a second, before importing.** Output
+properties (the printer icon) ▸ Frame Rate ▸ 30. The game runs its clips
+at 30 frames a second; at Blender's default of 24 they still play at the
+right speed, but their keys fall between frames, and changing the rate
+after importing changes the speed.
+
+**4. Import.** File ▸ Import ▸ glTF 2.0, pick the `.glb`, leave the
+options as they are. Press `Z` and choose **Material Preview** to see the
+textures. In the Outliner you will find:
+
+* `skeleton`, the armature: the game's joints as bones (`j45`, `j46`, …,
+  with `node`, `offset` and `end` nodes between them);
+* one mesh per game part, parented to `skeleton` with an Armature
+  modifier, so it follows the bones;
+* small `end…` empties hanging off bones: they mark where a chain of
+  bones ends and move with them. Hide them if they are in the way.
+
+**5. Play a clip.** The first clip is already on the armature: press
+Space. The scene's end frame stays at Blender's 250, so set **End** in the
+Timeline to the clip's length (26 for `motion/jr_cf#01`; the list in step
+2 and each strip in the NLA editor show it), or the last pose holds until
+frame 250.
+
+**6. Pick another clip.** Every clip is in the file as its own action,
+named after its pack and slot (`motion/jr_cf#03`). Select the armature,
+switch a window to the **Dope Sheet**, set its mode to **Action Editor**,
+and choose the action from the drop-down next to its name. The importer
+also lays every clip out as a muted track in the **NLA Editor**, which is
+the place to line clips up one after another.
+
+**7. See the bones.** Select `skeleton`, then Properties ▸ Armature (the
+running-figure icon) ▸ Viewport Display: tick **In Front** so the bones
+show through the mesh, and set Display As to **Stick** if the default
+shapes are too busy. Switch to Pose Mode (`Ctrl Tab`) to select a bone;
+the Dope Sheet then shows its keys. You can pose bones by hand on top of
+a clip or with no clip at all.
+
+**What moves and why.** Every bone the clip stores is keyed once a frame.
+The legs are solved the way the game solves them, toward a target near
+each foot, and the action holds the result; the targets themselves are
+not in the file. Hair, skirts, dresses and coats are not in the clips at
+all: the game simulates them while a clip plays, and the kit runs the
+same simulation and keys where it puts them, which is why Jr.'s coat
+swings behind his legs above. The face is a set of small bones under the
+head bone and follows it; eyes and mouths do not animate.
+
+**If something looks wrong.**
+
+* *Parts or the whole model stand still:* the armature has no action. Pick
+  one in the Action Editor (step 6).
+* *Two copies of the same character imported:* Blender adds `.001` to the
+  second file's action names; pick the action ending in `.001` for it.
+* *The clip plays too fast or too slow:* the frame rate was changed after
+  importing. Set it to 30 and import again.
+* *Spiky balls on every bone:* see "Bone display" above.
+* *A character you wanted has no actions:* not every model has motion made
+  for its skeleton (171 of the 1,317 models on the USA disc do). Cutscene
+  motion is in `mtnpack\` and is attached only when you name a pack in
+  step 2.
+
+<br clear="right">
+
+How the clips are read, what is simulated and what was checked:
+[MOTION.md](MOTION.md).
 
 ## Known gaps
 
-* **Animation has not been compared with the running game.** Hair and
-  cloth are baked from a port of the game's simulation; chains the game
-  treats as skirts keep their rest pose, and there is no wind
-  ([MOTION.md](MOTION.md), "What is not done").
+* **Animation has not been compared with the running game.** Hair,
+  skirts and coats are baked from a port of the game's simulation; there
+  is no wind ([MOTION.md](MOTION.md), "What is not done").
 * Two map meshes use vertex formats the parser skips, and blend shapes
   are ignored. Anything skipped is listed in the `.glb`'s `extras`.
 

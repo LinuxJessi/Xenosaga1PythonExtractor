@@ -16,9 +16,23 @@ frame, and a looping clip is played through once first. The result is
 baked into the actions like the legs. This is what brings back KOS-MOS's
 back hair in the run: left at rest it was welded to her head, and when
 she tipped her head back it sank into her back. Not followed: wind (off
-by default in the game), the hip sway, and skirt collision, so chains the
-game treats as skirts keep their rest pose. The simulation has not been
+by default in the game) and the hip sway. The simulation has not been
 compared with the running game.
+
+**Skirts and coats move too.** Chains the game treats as skirts were left
+at rest at first, so legs walked through skirts, dresses and coats. They
+now go through a port of `EXM_CheckSkirtCollision`, which keeps each joint
+out of the cone the legs sweep. The port also brings every skirt type's
+flags and each skeleton's skirt sizes over from `EXM_PresetHair`, plus
+Jr.'s coat width (`AdjustJrCoatWidth`). Jr.'s coat now swings clear of his
+legs: in field clip 2 its closest approach goes from 1.8 cm to 5.5 cm, and
+the disc self-test checks it. Elly, Helmer, Kevin, Virgil, Shion's
+alternate outfit, MOMO's second outfit and about a dozen NPCs have skirt
+chains too. KOS-MOS and Shion's usual outfit have none. The front page
+shows Jr. running with his coat (`docs/images/front/motion-jr-run.gif`),
+and [BLENDER.md](BLENDER.md#a-moving-model-step-by-step) now has a
+step-by-step guide from the disc to a character playing its clips in
+Blender, checked against what Blender 5.4's importer does with the files.
 
 **Legs and other pose fixes from the decomp.** Body blocks are now read
 and built the way `JNT_getVal` and `JNT_constructMatrix` do it, not

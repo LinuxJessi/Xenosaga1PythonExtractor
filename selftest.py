@@ -288,7 +288,8 @@ def _disc(r: _Run, iso_path: str, full: bool, scratch: Optional[str]) -> None:
 
     import fcv
     r.step("motion: the party's field packs read to their last byte, line up with their "
-           "skeletons, solved chains land on their targets", _quiet(lambda: fcv.selftest(iso_path)))
+           "skeletons, solved chains land on their targets, KOS-MOS's hair and Jr.'s coat "
+           "stay clear of the body", _quiet(lambda: fcv.selftest(iso_path)))
 
     if region.info(iso_path).build != "usa":
         # the editor's rows are keyed to the USA disc (txsource.py); on another
